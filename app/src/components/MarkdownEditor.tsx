@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { EditableTitle } from "./EditableTitle";
 
 interface MarkdownEditorProps {
   documentId: string;
@@ -121,7 +122,7 @@ export function MarkdownEditor({ documentId }: MarkdownEditorProps) {
           </svg>
           Back
         </button>
-        <span className="editor-topbar__title">{documentId}</span>
+        <EditableTitle documentId={documentId} />
         <div className="editor-topbar__actions">
           <button
             className={`editor-mode-btn ${!viewMode ? "active" : ""}`}

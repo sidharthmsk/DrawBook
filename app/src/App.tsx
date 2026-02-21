@@ -5,10 +5,82 @@ import { DrawioEditor } from "./components/DrawioEditor";
 import { MarkdownEditor } from "./components/MarkdownEditor";
 import { PdfViewer } from "./components/PdfViewer";
 import { Dashboard } from "./components/Dashboard";
+import { LoginPage } from "./components/LoginPage";
 
 type DocumentType = "tldraw" | "excalidraw" | "drawio" | "markdown" | "pdf";
 
+function injectAuthFetch(token: string) {
+  if ((window as any).__authFetchPatched) return;
+  const originalFetch = window.fetch;
+  window.fetch = function (input, init) {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input instanceof Request
+            ? input.url
+            : "";
+    if (url.startsWith("/api/") && !url.includes("/api/auth/")) {
+      init = init || {};
+      const headers = new Headers(init.headers);
+      if (!headers.has("Authorization")) {
+        headers.set("Authorization", `Bearer ${token}`);
+      }
+      init.headers = headers;
+    }
+    return originalFetch.call(this, input, init);
+  };
+  (window as any).__authFetchPatched = true;
+}
+
+export function getAuthToken(): string {
+  return localStorage.getItem("drawbook_token") || "";
+}
+
 function App() {
+  const [authState, setAuthState] = useState<
+    "checking" | "login" | "authenticated"
+  >("checking");
+
+  useEffect(() => {
+    const token = localStorage.getItem("drawbook_token") || "";
+    fetch("/api/auth/check", {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data.required || data.authenticated) {
+          if (token) injectAuthFetch(token);
+          setAuthState("authenticated");
+        } else {
+          setAuthState("login");
+        }
+      })
+      .catch(() => setAuthState("login"));
+  }, []);
+
+  const handleLogin = (token: string) => {
+    if (token) injectAuthFetch(token);
+    setAuthState("authenticated");
+  };
+
+  if (authState === "checking") {
+    return (
+      <div className="editor-loading">
+        <div className="editor-loading__spinner" />
+      </div>
+    );
+  }
+
+  if (authState === "login") {
+    return <LoginPage onLogin={handleLogin} />;
+  }
+
+  return <AppRouter />;
+}
+
+function AppRouter() {
   const urlParams = new URLSearchParams(window.location.search);
   const documentId = urlParams.get("doc");
   const folderId = urlParams.get("folder") ?? undefined;
@@ -55,9 +127,7 @@ function App() {
       return <PdfViewer documentId={documentId} />;
     default:
       return (
-        <div style={{ width: "100%", height: "100%" }}>
-          <TldrawEditor documentId={documentId} initialFolderId={folderId} />
-        </div>
+        <TldrawEditor documentId={documentId} initialFolderId={folderId} />
       );
   }
 }

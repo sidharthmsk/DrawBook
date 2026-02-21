@@ -1,4 +1,11 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 type DocumentType = "tldraw" | "excalidraw" | "drawio" | "markdown" | "pdf";
 
@@ -243,6 +250,106 @@ const TYPE_ICONS: Record<DocumentType, () => JSX.Element> = {
   pdf: IconPdf,
 };
 
+function ClickOrDouble({
+  className,
+  children,
+  onSingleClick,
+  onDoubleClick,
+}: {
+  className?: string;
+  children: React.ReactNode;
+  onSingleClick: () => void;
+  onDoubleClick: () => void;
+}) {
+  const clickTimer = useRef<NodeJS.Timeout | null>(null);
+  return (
+    <button
+      className={className}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (clickTimer.current) {
+          clearTimeout(clickTimer.current);
+          clickTimer.current = null;
+          onDoubleClick();
+        } else {
+          clickTimer.current = setTimeout(() => {
+            clickTimer.current = null;
+            onSingleClick();
+          }, 250);
+        }
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function DocContextMenu({
+  doc,
+  index,
+  openDoc,
+  startRename,
+  deleteDoc,
+  toggleSelect,
+  setMoveMenuDocId,
+  moveMenuDocId,
+  moveDocToFolder,
+  folders,
+  setOpenMenuId,
+}: {
+  doc: DocumentItem;
+  index: number;
+  openDoc: (doc: DocumentItem) => void;
+  startRename: (id: string, kind: "doc" | "folder", name: string) => void;
+  deleteDoc: (id: string) => void;
+  toggleSelect: (id: string, index: number, shift: boolean) => void;
+  setMoveMenuDocId: (fn: (v: string | null) => string | null) => void;
+  moveMenuDocId: string | null;
+  moveDocToFolder: (docId: string, folderId: string | null) => void;
+  folders: Folder[];
+  setOpenMenuId: (v: string | null) => void;
+}) {
+  return (
+    <div className="dropdown-menu" onClick={(e) => e.stopPropagation()}>
+      <button onClick={() => openDoc(doc)}>Open</button>
+      <button onClick={() => startRename(doc.id, "doc", doc.name)}>
+        Rename
+      </button>
+      <button
+        onClick={() =>
+          setMoveMenuDocId((current) => (current === doc.id ? null : doc.id))
+        }
+      >
+        Move to...
+      </button>
+      <button
+        onClick={() => {
+          toggleSelect(doc.id, index, false);
+          setOpenMenuId(null);
+        }}
+      >
+        Select
+      </button>
+      <button className="danger" onClick={() => deleteDoc(doc.id)}>
+        Delete
+      </button>
+      {moveMenuDocId === doc.id && (
+        <div className="dropdown-submenu">
+          <button onClick={() => moveDocToFolder(doc.id, null)}>Home</button>
+          {folders.map((folder) => (
+            <button
+              key={folder.id}
+              onClick={() => moveDocToFolder(doc.id, folder.id)}
+            >
+              {folder.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Dashboard() {
   const [allDocs, setAllDocs] = useState<DocumentItem[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -257,8 +364,13 @@ export function Dashboard() {
   const [draggingDocId, setDraggingDocId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [moveMenuDocId, setMoveMenuDocId] = useState<string | null>(null);
   const [newDropdownOpen, setNewDropdownOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
+  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
+  const lastSelectedIndex = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -306,15 +418,17 @@ export function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (!openMenuId && !newDropdownOpen) return;
+    if (!openMenuId && !newDropdownOpen && !bulkMoveOpen) return;
     const closeMenus = () => {
       setOpenMenuId(null);
+      setMenuPos(null);
       setMoveMenuDocId(null);
       setNewDropdownOpen(false);
+      setBulkMoveOpen(false);
     };
     document.addEventListener("click", closeMenus);
     return () => document.removeEventListener("click", closeMenus);
-  }, [openMenuId, newDropdownOpen]);
+  }, [openMenuId, newDropdownOpen, bulkMoveOpen]);
 
   const createNewDocument = (type: DocumentType) => {
     const prefix = type === "tldraw" ? "drawing" : type;
@@ -444,6 +558,79 @@ export function Dashboard() {
     }
   };
 
+  const toggleSelect = useCallback(
+    (docId: string, index: number, shiftKey: boolean) => {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        if (shiftKey && lastSelectedIndex.current !== null) {
+          const start = Math.min(lastSelectedIndex.current, index);
+          const end = Math.max(lastSelectedIndex.current, index);
+          for (let i = start; i <= end; i++) {
+            if (visibleDocs[i]) next.add(visibleDocs[i].id);
+          }
+        } else {
+          if (next.has(docId)) {
+            next.delete(docId);
+          } else {
+            next.add(docId);
+          }
+        }
+        return next;
+      });
+      lastSelectedIndex.current = index;
+    },
+    [visibleDocs],
+  );
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    lastSelectedIndex.current = null;
+    setBulkMoveOpen(false);
+  };
+
+  const bulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (
+      !confirm(
+        `Delete ${selectedIds.size} document${selectedIds.size > 1 ? "s" : ""}?`,
+      )
+    )
+      return;
+    try {
+      const res = await fetch("/api/bulk/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentIds: Array.from(selectedIds) }),
+      });
+      if (!res.ok) throw new Error("Bulk delete failed");
+      setAllDocs((prev) => prev.filter((d) => !selectedIds.has(d.id)));
+      clearSelection();
+    } catch (err) {
+      console.error("Failed to bulk delete:", err);
+    }
+  };
+
+  const bulkMove = async (folderId: string | null) => {
+    if (selectedIds.size === 0) return;
+    try {
+      const res = await fetch("/api/bulk/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          documentIds: Array.from(selectedIds),
+          folderId,
+        }),
+      });
+      if (!res.ok) throw new Error("Bulk move failed");
+      setAllDocs((prev) =>
+        prev.map((d) => (selectedIds.has(d.id) ? { ...d, folderId } : d)),
+      );
+      clearSelection();
+    } catch (err) {
+      console.error("Failed to bulk move:", err);
+    }
+  };
+
   const startRename = (
     id: string,
     kind: "doc" | "folder",
@@ -542,9 +729,41 @@ export function Dashboard() {
           <span className="folder-count">{folderDocCounts.rootCount}</span>
         </button>
 
-        {folders.length > 0 && <p className="sidebar-section-label">Folders</p>}
+        <div className="sidebar-section-row">
+          <p className="sidebar-section-label">Folders</p>
+          <button
+            className="sidebar-add-btn"
+            onClick={() => setCreatingFolder(true)}
+            aria-label="New folder"
+          >
+            <IconPlus />
+          </button>
+        </div>
 
         <div className="folder-list">
+          {creatingFolder && (
+            <form className="new-folder-inline" onSubmit={createFolder}>
+              <IconFolder />
+              <input
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                placeholder="Folder name"
+                autoFocus
+                onBlur={() => {
+                  if (!newFolderName.trim()) {
+                    setCreatingFolder(false);
+                    setNewFolderName("");
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setCreatingFolder(false);
+                    setNewFolderName("");
+                  }
+                }}
+              />
+            </form>
+          )}
           {folders.map((folder) => {
             const isRenaming =
               renameTarget?.id === folder.id && renameTarget.kind === "folder";
@@ -628,31 +847,6 @@ export function Dashboard() {
             );
           })}
         </div>
-
-        {creatingFolder ? (
-          <form className="new-folder-form" onSubmit={createFolder}>
-            <input
-              value={newFolderName}
-              onChange={(e) => setNewFolderName(e.target.value)}
-              placeholder="Folder name"
-              autoFocus
-            />
-            <button type="submit">Create</button>
-            <button
-              type="button"
-              onClick={() => {
-                setCreatingFolder(false);
-                setNewFolderName("");
-              }}
-            >
-              Cancel
-            </button>
-          </form>
-        ) : (
-          <button className="ghost-btn" onClick={() => setCreatingFolder(true)}>
-            + New Folder
-          </button>
-        )}
       </aside>
 
       <main className="dashboard-main">
@@ -753,150 +947,262 @@ export function Dashboard() {
             </p>
           </div>
         ) : (
-          <section className="doc-list">
-            <div className="doc-list__header">
-              <span className="doc-list__col doc-list__col--icon" />
-              <span className="doc-list__col doc-list__col--name">Name</span>
-              <span className="doc-list__col doc-list__col--type">Type</span>
-              <span className="doc-list__col doc-list__col--date">
-                Modified
-              </span>
-              <span className="doc-list__col doc-list__col--actions" />
-            </div>
-            {visibleDocs.map((doc) => {
-              const isRenaming =
-                renameTarget?.id === doc.id && renameTarget.kind === "doc";
-              const typeConf = TYPE_CONFIG[doc.type] || TYPE_CONFIG.tldraw;
-              const TypeIcon = TYPE_ICONS[doc.type] || TYPE_ICONS.tldraw;
-              return (
-                <div
-                  key={doc.id}
-                  className="doc-row"
-                  draggable
-                  onDragStart={(e) => {
-                    setDraggingDocId(doc.id);
-                    e.dataTransfer.setData("text/plain", doc.id);
-                  }}
-                  onDragEnd={() => setDraggingDocId(null)}
-                >
-                  <span
-                    className="doc-row__icon"
-                    style={{ color: typeConf.color }}
-                    onClick={() => openDoc(doc)}
-                  >
-                    <TypeIcon />
-                  </span>
-
-                  <span className="doc-row__name">
-                    {isRenaming ? (
-                      <input
-                        className="rename-input"
-                        value={renameValue}
-                        onChange={(e) => setRenameValue(e.target.value)}
-                        onBlur={finishRename}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") finishRename();
-                          if (e.key === "Escape") setRenameTarget(null);
-                        }}
-                        autoFocus
-                      />
-                    ) : (
-                      <button
-                        className="doc-row__name-btn"
-                        onClick={() => openDoc(doc)}
-                      >
-                        {doc.name}
-                      </button>
-                    )}
-                  </span>
-
-                  <span className="doc-row__type">
-                    <span
-                      className="type-pill"
-                      style={
-                        {
-                          "--pill-color": typeConf.color,
-                        } as React.CSSProperties
-                      }
-                    >
-                      {typeConf.label}
-                    </span>
-                  </span>
-
-                  <span className="doc-row__date">
-                    {formatDate(doc.modifiedAt)}
-                  </span>
-
-                  <span className="doc-row__actions">
+          <>
+            {selectedIds.size > 0 && (
+              <div className="bulk-bar">
+                <span className="bulk-bar__count">
+                  {selectedIds.size} selected
+                </span>
+                <div className="bulk-bar__actions">
+                  <button className="bulk-bar__btn" onClick={clearSelection}>
+                    Clear
+                  </button>
+                  <div className="bulk-move-menu">
                     <button
-                      className="icon-menu-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const menuId = `doc-${doc.id}`;
-                        setOpenMenuId((current) =>
-                          current === menuId ? null : menuId,
-                        );
-                        setMoveMenuDocId(null);
-                      }}
-                      aria-label={`Actions for ${doc.name}`}
+                      className="bulk-bar__btn"
+                      onClick={() => setBulkMoveOpen((v) => !v)}
                     >
-                      <IconDots />
+                      Move to...
                     </button>
-
-                    {openMenuId === `doc-${doc.id}` && (
-                      <div
-                        className="dropdown-menu"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button onClick={() => openDoc(doc)}>Open</button>
-                        <button
-                          onClick={() => startRename(doc.id, "doc", doc.name)}
-                        >
-                          Rename
-                        </button>
-                        <button
-                          onClick={() =>
-                            setMoveMenuDocId((current) =>
-                              current === doc.id ? null : doc.id,
-                            )
-                          }
-                        >
-                          Move to...
-                        </button>
-                        <button
-                          className="danger"
-                          onClick={() => deleteDoc(doc.id)}
-                        >
-                          Delete
-                        </button>
-
-                        {moveMenuDocId === doc.id && (
-                          <div className="dropdown-submenu">
-                            <button
-                              onClick={() => moveDocToFolder(doc.id, null)}
-                            >
-                              Home
-                            </button>
-                            {folders.map((folder) => (
-                              <button
-                                key={folder.id}
-                                onClick={() =>
-                                  moveDocToFolder(doc.id, folder.id)
-                                }
-                              >
-                                {folder.name}
-                              </button>
-                            ))}
-                          </div>
-                        )}
+                    {bulkMoveOpen && (
+                      <div className="bulk-move-dropdown">
+                        <button onClick={() => bulkMove(null)}>Home</button>
+                        {folders.map((f) => (
+                          <button key={f.id} onClick={() => bulkMove(f.id)}>
+                            {f.name}
+                          </button>
+                        ))}
                       </div>
                     )}
-                  </span>
+                  </div>
+                  <button
+                    className="bulk-bar__btn bulk-bar__btn--danger"
+                    onClick={bulkDelete}
+                  >
+                    Delete
+                  </button>
                 </div>
-              );
-            })}
-          </section>
+              </div>
+            )}
+            <section className="doc-list">
+              <div className="doc-list__header">
+                <span className="doc-list__col doc-list__col--icon" />
+                <span className="doc-list__col doc-list__col--name">Name</span>
+                <span className="doc-list__col doc-list__col--type">Type</span>
+                <span className="doc-list__col doc-list__col--date">
+                  Modified
+                </span>
+                <span className="doc-list__col doc-list__col--actions" />
+              </div>
+              {visibleDocs.map((doc, index) => {
+                const isRenaming =
+                  renameTarget?.id === doc.id && renameTarget.kind === "doc";
+                const typeConf = TYPE_CONFIG[doc.type] || TYPE_CONFIG.tldraw;
+                const TypeIcon = TYPE_ICONS[doc.type] || TYPE_ICONS.tldraw;
+                const isSelected = selectedIds.has(doc.id);
+                return (
+                  <div
+                    key={doc.id}
+                    className={`doc-row${isSelected ? " doc-row--selected" : ""}`}
+                    draggable
+                    onDragStart={(e) => {
+                      if (longPressTimer.current) {
+                        clearTimeout(longPressTimer.current);
+                        longPressTimer.current = null;
+                      }
+                      setDraggingDocId(doc.id);
+                      e.dataTransfer.setData("text/plain", doc.id);
+                      const ghost = document.createElement("div");
+                      ghost.textContent = doc.name;
+                      ghost.className = "drag-ghost";
+                      document.body.appendChild(ghost);
+                      e.dataTransfer.setDragImage(ghost, 0, 0);
+                      requestAnimationFrame(() => ghost.remove());
+                    }}
+                    onDragEnd={() => setDraggingDocId(null)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      const menuId = `doc-${doc.id}`;
+                      setOpenMenuId(menuId);
+                      setMenuPos({ x: e.clientX, y: e.clientY });
+                      setMoveMenuDocId(null);
+                    }}
+                    onClick={(e) => {
+                      if (e.shiftKey || selectedIds.size > 0) {
+                        e.preventDefault();
+                        toggleSelect(doc.id, index, e.shiftKey);
+                      }
+                    }}
+                    onPointerDown={() => {
+                      longPressTimer.current = setTimeout(() => {
+                        toggleSelect(doc.id, index, false);
+                      }, 500);
+                    }}
+                    onPointerUp={() => {
+                      if (longPressTimer.current) {
+                        clearTimeout(longPressTimer.current);
+                        longPressTimer.current = null;
+                      }
+                    }}
+                    onPointerLeave={() => {
+                      if (longPressTimer.current) {
+                        clearTimeout(longPressTimer.current);
+                        longPressTimer.current = null;
+                      }
+                    }}
+                  >
+                    <span
+                      className="doc-row__icon"
+                      style={{ color: typeConf.color }}
+                      onClick={(e) => {
+                        if (selectedIds.size > 0) return;
+                        e.stopPropagation();
+                        openDoc(doc);
+                      }}
+                    >
+                      {selectedIds.size > 0 ? (
+                        <button
+                          className={`doc-row__checkbox${isSelected ? " doc-row__checkbox--checked" : ""}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleSelect(doc.id, index, e.shiftKey);
+                          }}
+                        >
+                          {isSelected && (
+                            <svg
+                              width="10"
+                              height="10"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M3 8l3.5 3.5L13 5" />
+                            </svg>
+                          )}
+                        </button>
+                      ) : (
+                        <TypeIcon />
+                      )}
+                    </span>
+
+                    <span className="doc-row__name">
+                      {isRenaming ? (
+                        <input
+                          className="rename-input"
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onBlur={finishRename}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") finishRename();
+                            if (e.key === "Escape") setRenameTarget(null);
+                          }}
+                          autoFocus
+                        />
+                      ) : (
+                        <ClickOrDouble
+                          className="doc-row__name-btn"
+                          onSingleClick={() => {
+                            if (selectedIds.size > 0) return;
+                            openDoc(doc);
+                          }}
+                          onDoubleClick={() => {
+                            startRename(doc.id, "doc", doc.name);
+                          }}
+                        >
+                          {doc.name}
+                        </ClickOrDouble>
+                      )}
+                    </span>
+
+                    <span className="doc-row__type">
+                      <span
+                        className="type-pill"
+                        style={
+                          {
+                            "--pill-color": typeConf.color,
+                          } as React.CSSProperties
+                        }
+                      >
+                        {typeConf.label}
+                      </span>
+                    </span>
+
+                    <span className="doc-row__date">
+                      {formatDate(doc.modifiedAt)}
+                    </span>
+
+                    <span className="doc-row__actions">
+                      <button
+                        className="icon-menu-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const menuId = `doc-${doc.id}`;
+                          setMenuPos(null);
+                          setOpenMenuId((current) =>
+                            current === menuId ? null : menuId,
+                          );
+                          setMoveMenuDocId(null);
+                        }}
+                        aria-label={`Actions for ${doc.name}`}
+                      >
+                        <IconDots />
+                      </button>
+
+                      {openMenuId === `doc-${doc.id}` && !menuPos && (
+                        <DocContextMenu
+                          doc={doc}
+                          index={index}
+                          openDoc={openDoc}
+                          startRename={startRename}
+                          deleteDoc={deleteDoc}
+                          toggleSelect={toggleSelect}
+                          setMoveMenuDocId={setMoveMenuDocId}
+                          moveMenuDocId={moveMenuDocId}
+                          moveDocToFolder={moveDocToFolder}
+                          folders={folders}
+                          setOpenMenuId={setOpenMenuId}
+                        />
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </section>
+          </>
         )}
+
+        {openMenuId?.startsWith("doc-") &&
+          menuPos &&
+          (() => {
+            const docId = openMenuId.replace("doc-", "");
+            const doc = visibleDocs.find((d) => d.id === docId);
+            const index = visibleDocs.findIndex((d) => d.id === docId);
+            if (!doc) return null;
+            return (
+              <div
+                className="context-menu-portal"
+                style={{ top: menuPos.y, left: menuPos.x }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <DocContextMenu
+                  doc={doc}
+                  index={index}
+                  openDoc={openDoc}
+                  startRename={startRename}
+                  deleteDoc={deleteDoc}
+                  toggleSelect={toggleSelect}
+                  setMoveMenuDocId={setMoveMenuDocId}
+                  moveMenuDocId={moveMenuDocId}
+                  moveDocToFolder={moveDocToFolder}
+                  folders={folders}
+                  setOpenMenuId={setOpenMenuId}
+                />
+              </div>
+            );
+          })()}
       </main>
     </div>
   );

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { EditableTitle } from "./EditableTitle";
 
 interface PdfViewerProps {
   documentId: string;
@@ -137,7 +138,7 @@ export function PdfViewer({ documentId }: PdfViewerProps) {
           </svg>
           Back
         </button>
-        <span className="editor-topbar__title">{documentId}</span>
+        <EditableTitle documentId={documentId} />
         <div className="pdf-controls">
           <button
             className="pdf-nav-btn"
