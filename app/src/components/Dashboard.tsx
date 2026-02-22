@@ -6,14 +6,24 @@ import {
   useRef,
   useState,
 } from "react";
+import { useConfirm } from "./ConfirmDialog";
 
-type DocumentType = "tldraw" | "excalidraw" | "drawio" | "markdown" | "pdf";
+type DocumentType =
+  | "tldraw"
+  | "excalidraw"
+  | "drawio"
+  | "markdown"
+  | "pdf"
+  | "spreadsheet"
+  | "kanban";
 
 function typeFromId(id: string): DocumentType {
   if (id.startsWith("excalidraw-")) return "excalidraw";
   if (id.startsWith("drawio-")) return "drawio";
   if (id.startsWith("markdown-")) return "markdown";
   if (id.startsWith("pdf-")) return "pdf";
+  if (id.startsWith("spreadsheet-")) return "spreadsheet";
+  if (id.startsWith("kanban-")) return "kanban";
   return "tldraw";
 }
 
@@ -90,6 +100,8 @@ const TYPE_CONFIG: Record<DocumentType, { label: string; color: string }> = {
   drawio: { label: "Draw.io", color: "var(--type-drawio)" },
   markdown: { label: "Markdown", color: "var(--type-markdown)" },
   pdf: { label: "PDF", color: "var(--type-pdf)" },
+  spreadsheet: { label: "Spreadsheet", color: "var(--type-spreadsheet)" },
+  kanban: { label: "Kanban", color: "var(--type-kanban)" },
 };
 
 /* ─── Inline SVG Icons ─── */
@@ -301,12 +313,47 @@ const IconPdf = () => (
   </svg>
 );
 
+const IconSpreadsheet = () => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
+  </svg>
+);
+
+const IconKanban = () => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <rect x="3" y="3" width="5" height="14" rx="1" />
+    <rect x="10" y="3" width="5" height="10" rx="1" />
+    <rect x="17" y="3" width="5" height="18" rx="1" />
+  </svg>
+);
+
 const TYPE_ICONS: Record<DocumentType, () => JSX.Element> = {
   tldraw: IconTldraw,
   excalidraw: IconExcalidraw,
   drawio: IconDrawio,
   markdown: IconMarkdown,
   pdf: IconPdf,
+  spreadsheet: IconSpreadsheet,
+  kanban: IconKanban,
 };
 
 function ClickOrDouble({
@@ -408,7 +455,10 @@ function DocContextMenu({
       <button onClick={() => startRename(doc.id, "doc", doc.name)}>
         Rename
       </button>
-      <div className="dropdown-menu__hover-parent">
+      <div
+        className="dropdown-menu__hover-parent"
+        onMouseLeave={() => setMoveMenuDocId(() => null)}
+      >
         <button
           className="dropdown-menu__has-sub"
           onClick={() =>
@@ -461,6 +511,7 @@ function DocContextMenu({
 }
 
 export function Dashboard() {
+  const confirm = useConfirm();
   const [allDocs, setAllDocs] = useState<DocumentItem[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [currentFolder, setCurrentFolder] = useState<string | null>(null);
@@ -732,7 +783,12 @@ export function Dashboard() {
   };
 
   const deleteFolder = async (folderId: string) => {
-    if (!confirm("Delete this folder? Documents inside it will move to Home."))
+    if (
+      !(await confirm({
+        message: "Delete this folder? Documents inside it will move to Home.",
+        danger: true,
+      }))
+    )
       return;
     try {
       const res = await fetch(`/api/folders/${folderId}`, { method: "DELETE" });
@@ -745,7 +801,8 @@ export function Dashboard() {
   };
 
   const deleteDoc = async (docId: string) => {
-    if (!confirm("Delete this document?")) return;
+    if (!(await confirm({ message: "Delete this document?", danger: true })))
+      return;
     try {
       const res = await fetch(`/api/delete/${docId}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Delete document failed");
@@ -834,9 +891,10 @@ export function Dashboard() {
   const bulkDelete = async () => {
     if (selectedIds.size === 0) return;
     if (
-      !confirm(
-        `Delete ${selectedIds.size} document${selectedIds.size > 1 ? "s" : ""}?`,
-      )
+      !(await confirm({
+        message: `Delete ${selectedIds.size} document${selectedIds.size > 1 ? "s" : ""}?`,
+        danger: true,
+      }))
     )
       return;
     try {
@@ -1249,22 +1307,30 @@ export function Dashboard() {
                   className="new-dropdown-menu"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <button onClick={() => createNewDocument("tldraw")}>
-                    <IconTldraw />
-                    <span>tldraw</span>
-                  </button>
-                  <button onClick={() => createNewDocument("excalidraw")}>
-                    <IconExcalidraw />
-                    <span>Excalidraw</span>
-                  </button>
-                  <button onClick={() => createNewDocument("drawio")}>
-                    <IconDrawio />
-                    <span>Draw.io</span>
-                  </button>
-                  <button onClick={() => createNewDocument("markdown")}>
-                    <IconMarkdown />
-                    <span>Markdown</span>
-                  </button>
+                  {(
+                    [
+                      "tldraw",
+                      "excalidraw",
+                      "drawio",
+                      "markdown",
+                      "spreadsheet",
+                      "kanban",
+                    ] as DocumentType[]
+                  ).map((type) => {
+                    const conf = TYPE_CONFIG[type];
+                    const Icon = TYPE_ICONS[type];
+                    return (
+                      <button
+                        key={type}
+                        onClick={() => createNewDocument(type)}
+                      >
+                        <span style={{ color: conf.color, display: "flex" }}>
+                          <Icon />
+                        </span>
+                        <span>{conf.label}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>

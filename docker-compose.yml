@@ -1,22 +1,23 @@
 services:
-  tldraw:
+  drawbook:
     build:
       context: ./app
       dockerfile: Dockerfile
-    container_name: tldraw
+    container_name: drawbook
     restart: unless-stopped
-    tty: false
-    stdin_open: false
     environment:
-      - TZ=Asia/Kolkata
       - PORT=3000
       - DATA_DIR=/app/data
+      # - APP_PASSWORD=changeme
+      # - STORAGE_BACKEND=minio
+      # - MINIO_ENDPOINT_URL=http://minio:9000
+      # - MINIO_ACCESS_KEY=
+      # - MINIO_SECRET_KEY=
+      # - MINIO_BUCKET=drawbook
     volumes:
-      - ./app/data:/app/data
+      - drawbook-data:/app/data
     ports:
-      - "3045:3000"
-    networks:
-      - homelab
+      - "3000:3000"
     security_opt:
       - no-new-privileges:true
     pids_limit: 128
@@ -34,10 +35,8 @@ services:
       retries: 3
       start_period: 30s
 
-networks:
-  homelab:
-    name: homelab
-    external: true
+volumes:
+  drawbook-data:
 
 
 

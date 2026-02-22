@@ -61,7 +61,7 @@ export class PreviewShapeUtil extends BaseBoxShapeUtil<PreviewShape> {
                   pointerEvents: isEditing ? "all" : "none",
                   opacity: isLoaded ? 1 : 0,
                 }}
-                sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+                sandbox="allow-scripts allow-popups allow-forms"
                 onLoad={handleLoad}
               />
               {!isLoaded && (
