@@ -8,6 +8,7 @@ export function EditableTitle({ documentId }: EditableTitleProps) {
   const [displayName, setDisplayName] = useState(documentId);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
+  const cancelled = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -20,6 +21,7 @@ export function EditableTitle({ documentId }: EditableTitleProps) {
   }, [documentId]);
 
   const startEditing = useCallback(() => {
+    cancelled.current = false;
     setEditValue(displayName);
     setEditing(true);
   }, [displayName]);
@@ -32,6 +34,10 @@ export function EditableTitle({ documentId }: EditableTitleProps) {
   }, [editing]);
 
   const finishEditing = useCallback(async () => {
+    if (cancelled.current) {
+      cancelled.current = false;
+      return;
+    }
     setEditing(false);
     const trimmed = editValue.trim();
     if (!trimmed || trimmed === displayName) return;
@@ -60,7 +66,10 @@ export function EditableTitle({ documentId }: EditableTitleProps) {
         onBlur={finishEditing}
         onKeyDown={(e) => {
           if (e.key === "Enter") finishEditing();
-          if (e.key === "Escape") setEditing(false);
+          if (e.key === "Escape") {
+            cancelled.current = true;
+            setEditing(false);
+          }
         }}
       />
     );
