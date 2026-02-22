@@ -56,6 +56,7 @@ function requireAuth(
 }
 
 const app = express();
+app.set("trust proxy", 1);
 const server = createServer(app);
 
 // WebSocket server for live sync
