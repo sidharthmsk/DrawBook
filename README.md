@@ -67,6 +67,7 @@ Copy `app/env.example` to `app/.env` and adjust:
 | `PORT` | `3000` | Server port |
 | `DATA_DIR` | `./data` | Local storage directory |
 | `APP_PASSWORD` | *(unset)* | Set to enable password protection |
+| `ENABLE_TLDRAW` | `false` | Set to `true` to enable the tldraw whiteboard (requires a [tldraw license](https://tldraw.dev) for production) |
 | `STORAGE_BACKEND` | *(auto)* | `local` or `minio` — auto-detects when MinIO vars are present |
 | `MINIO_ENDPOINT_URL` | — | Full URL to S3/MinIO endpoint (e.g. `http://minio:9000`) |
 | `MINIO_ACCESS_KEY` | — | S3 access key |

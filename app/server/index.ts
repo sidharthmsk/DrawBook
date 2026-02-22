@@ -41,6 +41,9 @@ const AUTH_TOKEN = APP_PASSWORD
   ? crypto.createHash("sha256").update(APP_PASSWORD).digest("hex")
   : "";
 
+const ENABLE_TLDRAW =
+  (process.env.ENABLE_TLDRAW || "false").toLowerCase() === "true";
+
 function requireAuth(
   req: express.Request,
   res: express.Response,
@@ -166,6 +169,10 @@ app.get("/api/auth/check", (req, res) => {
   const header = req.headers.authorization;
   const valid = header === `Bearer ${AUTH_TOKEN}`;
   res.json({ authenticated: valid, required: true });
+});
+
+app.get("/api/config", (_req, res) => {
+  res.json({ enableTldraw: ENABLE_TLDRAW });
 });
 
 // Protect all other /api routes

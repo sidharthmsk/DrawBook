@@ -58,19 +58,33 @@ export function getAuthToken(): string {
   return localStorage.getItem("drawbook_token") || "";
 }
 
+export interface AppConfig {
+  enableTldraw: boolean;
+}
+
+const DEFAULT_CONFIG: AppConfig = { enableTldraw: false };
+
 function App() {
   const [authState, setAuthState] = useState<
     "checking" | "login" | "authenticated"
   >("checking");
+  const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
 
   useEffect(() => {
     const token = localStorage.getItem("drawbook_token") || "";
-    fetch("/api/auth/check", {
+
+    const authCheck = fetch("/api/auth/check", {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
+    }).then((r) => r.json());
+
+    const configCheck = fetch("/api/config")
       .then((r) => r.json())
-      .then((data) => {
-        if (!data.required || data.authenticated) {
+      .catch(() => DEFAULT_CONFIG);
+
+    Promise.all([authCheck, configCheck])
+      .then(([authData, configData]) => {
+        setConfig(configData);
+        if (!authData.required || authData.authenticated) {
           if (token) injectAuthFetch(token);
           setAuthState("authenticated");
         } else {
@@ -99,12 +113,12 @@ function App() {
 
   return (
     <ConfirmProvider>
-      <AppRouter />
+      <AppRouter config={config} />
     </ConfirmProvider>
   );
 }
 
-function AppRouter() {
+function AppRouter({ config }: { config: AppConfig }) {
   const urlParams = new URLSearchParams(window.location.search);
   const documentId = urlParams.get("doc");
   const folderId = urlParams.get("folder") ?? undefined;
@@ -126,7 +140,7 @@ function AppRouter() {
   }, [documentId, urlType]);
 
   if (!documentId) {
-    return <Dashboard />;
+    return <Dashboard config={config} />;
   }
 
   if (loading) {
@@ -154,6 +168,30 @@ function AppRouter() {
     case "kanban":
       return <KanbanEditor documentId={documentId} />;
     default:
+      if (!config.enableTldraw) {
+        return (
+          <div className="editor-loading">
+            <div style={{ textAlign: "center", maxWidth: 420 }}>
+              <h2 style={{ margin: "0 0 8px" }}>tldraw is disabled</h2>
+              <p style={{ opacity: 0.7, margin: 0 }}>
+                Set <code>ENABLE_TLDRAW=true</code> in your <code>.env</code>{" "}
+                file and restart the server to use the tldraw editor. A tldraw
+                license key is required for production use.
+              </p>
+              <a
+                href="/"
+                style={{
+                  display: "inline-block",
+                  marginTop: 16,
+                  color: "var(--accent)",
+                }}
+              >
+                Back to Dashboard
+              </a>
+            </div>
+          </div>
+        );
+      }
       return (
         <TldrawEditor documentId={documentId} initialFolderId={folderId} />
       );
