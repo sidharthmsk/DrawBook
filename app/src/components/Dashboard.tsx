@@ -689,10 +689,11 @@ export function Dashboard() {
   }, [allDocs, folders]);
 
   const visibleDocs = useMemo(() => {
-    const byFolder = allDocs.filter((doc) => doc.folderId === currentFolder);
-    if (!searchTerm.trim()) return byFolder;
+    if (!searchTerm.trim()) {
+      return allDocs.filter((doc) => doc.folderId === currentFolder);
+    }
     const normalized = searchTerm.trim().toLowerCase();
-    return byFolder.filter(
+    return allDocs.filter(
       (doc) =>
         doc.name.toLowerCase().includes(normalized) ||
         doc.id.toLowerCase().includes(normalized),
