@@ -1,7 +1,7 @@
 import type { Editor, TLShapePartial } from "tldraw";
 import type { BlockNoteEditor } from "@blocknote/core";
 
-export type EditorType = "excalidraw" | "markdown" | "tldraw";
+export type EditorType = "excalidraw" | "markdown" | "tldraw" | "drawio";
 
 export interface EditorAdapter {
   type: EditorType;
@@ -261,6 +261,106 @@ export function createMarkdownAdapter(editorRef: {
       } catch (e) {
         console.error("[AI] Failed to apply markdown content:", e);
       }
+    },
+  };
+}
+
+export function createDrawioAdapter(xmlRef: {
+  current: string;
+}): EditorAdapter {
+  return {
+    type: "drawio",
+    getContext() {
+      const xml = xmlRef.current;
+      if (!xml) return "The diagram is empty.";
+
+      try {
+        // Parse draw.io XML to extract cell information
+        // Draw.io XML has <mxCell> elements with value (label), style, source, target attributes
+        const cells: string[] = [];
+        const connections: string[] = [];
+
+        // Match mxCell elements with attributes
+        const cellRegex =
+          /<mxCell\s+([^>]*?)\/?>|<mxCell\s+([^>]*?)>[\s\S]*?<\/mxCell>/g;
+        let match;
+
+        while ((match = cellRegex.exec(xml)) !== null) {
+          const attrs = match[1] || match[2] || "";
+
+          const getId = (s: string) => {
+            const m = s.match(/\bid=["']([^"']*)["']/);
+            return m ? m[1] : null;
+          };
+          const getValue = (s: string) => {
+            const m = s.match(/\bvalue=["']([^"']*)["']/);
+            return m ? m[1] : null;
+          };
+          const getStyle = (s: string) => {
+            const m = s.match(/\bstyle=["']([^"']*)["']/);
+            return m ? m[1] : null;
+          };
+          const getSource = (s: string) => {
+            const m = s.match(/\bsource=["']([^"']*)["']/);
+            return m ? m[1] : null;
+          };
+          const getTarget = (s: string) => {
+            const m = s.match(/\btarget=["']([^"']*)["']/);
+            return m ? m[1] : null;
+          };
+
+          const id = getId(attrs);
+          const value = getValue(attrs);
+          const style = getStyle(attrs);
+          const source = getSource(attrs);
+          const target = getTarget(attrs);
+
+          // Skip root and layer cells (id 0 and 1)
+          if (id === "0" || id === "1") continue;
+
+          if (source && target) {
+            // This is an edge/connection
+            const label = value ? ` labeled "${value}"` : "";
+            connections.push(`${source} -> ${target}${label}`);
+          } else if (value) {
+            // This is a vertex/shape with a label
+            let shapeType = "shape";
+            if (style) {
+              if (style.includes("ellipse")) shapeType = "ellipse";
+              else if (style.includes("rhombus")) shapeType = "diamond";
+              else if (style.includes("rounded=1")) shapeType = "rounded rect";
+              else if (style.includes("shape=")) {
+                const sm = style.match(/shape=(\w+)/);
+                if (sm) shapeType = sm[1];
+              }
+            }
+            cells.push(`[${id}] ${shapeType}: "${value}"`);
+          }
+        }
+
+        if (cells.length === 0 && connections.length === 0) {
+          return "The diagram is empty.";
+        }
+
+        const parts: string[] = [];
+        if (cells.length > 0) {
+          parts.push(`${cells.length} shape(s):\n${cells.join("\n")}`);
+        }
+        if (connections.length > 0) {
+          parts.push(
+            `${connections.length} connection(s):\n${connections.join("\n")}`,
+          );
+        }
+        return parts.join("\n\n");
+      } catch (e) {
+        console.error("[AI] Failed to parse draw.io XML:", e);
+        return "Unable to read diagram content.";
+      }
+    },
+    applyContent(_content: string) {
+      // draw.io runs in an iframe with postMessage protocol.
+      // Writing back requires postMessage with action:'load' and merged XML,
+      // which is complex and fragile. For now, AI responses are text-only.
     },
   };
 }
