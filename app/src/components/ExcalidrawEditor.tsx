@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { EditableTitle } from "./EditableTitle";
+import { EditorShell } from "./EditorShell";
+import { createExcalidrawAdapter } from "./ai/EditorAdapter";
+import type { EditorAdapter } from "./ai/EditorAdapter";
 
 interface ExcalidrawEditorProps {
   documentId: string;
@@ -14,6 +16,8 @@ export function ExcalidrawEditor({ documentId }: ExcalidrawEditorProps) {
   const saveTimeout = useRef<NodeJS.Timeout | null>(null);
   const latestScene = useRef<any>(null);
   const initialSaveDone = useRef(false);
+  const excalidrawApiRef = useRef<any>(null);
+  const [adapter, setAdapter] = useState<EditorAdapter | null>(null);
 
   useEffect(() => {
     import("@excalidraw/excalidraw").then((mod) => {
@@ -73,6 +77,16 @@ export function ExcalidrawEditor({ documentId }: ExcalidrawEditorProps) {
     [saveToServer, initialData],
   );
 
+  const handleExcalidrawApi = useCallback((api: any) => {
+    excalidrawApiRef.current = api;
+    setAdapter(
+      createExcalidrawAdapter(
+        () => api.getSceneElements(),
+        (scene: { elements: any[] }) => api.updateScene(scene),
+      ),
+    );
+  }, []);
+
   if (!ExcalidrawComp || initialData === undefined) {
     return (
       <div className="editor-loading">
@@ -91,47 +105,17 @@ export function ExcalidrawEditor({ documentId }: ExcalidrawEditorProps) {
   }
 
   return (
-    <div className="editor-wrapper">
-      <div className="editor-topbar">
-        <button
-          className="editor-back-btn"
-          onClick={() => (window.location.href = "/")}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M10 12L6 8l4-4" />
-          </svg>
-          Back
-        </button>
-        <EditableTitle documentId={documentId} />
-        <div className="editor-topbar__status">
-          <span
-            className={`editor-status-dot editor-status-dot--${saveStatus === "error" ? "error" : saveStatus === "saved" ? "saved" : "saving"}`}
-          />
-          <span>
-            {saveStatus === "saved"
-              ? "Saved"
-              : saveStatus === "saving"
-                ? "Saving..."
-                : "Error"}
-          </span>
-        </div>
-      </div>
-      <div className="editor-canvas">
-        <ExcalidrawComp
-          onChange={handleChange}
-          theme="dark"
-          {...excalidrawProps}
-        />
-      </div>
-    </div>
+    <EditorShell
+      documentId={documentId}
+      adapter={adapter}
+      saveStatus={saveStatus}
+    >
+      <ExcalidrawComp
+        onChange={handleChange}
+        excalidrawAPI={handleExcalidrawApi}
+        theme="dark"
+        {...excalidrawProps}
+      />
+    </EditorShell>
   );
 }

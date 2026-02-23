@@ -1,11 +1,13 @@
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { EditableTitle } from "./EditableTitle";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { EditorShell } from "./EditorShell";
 import { Block, BlockNoteEditor } from "@blocknote/core";
 import { BlockNoteView } from "@blocknote/mantine";
 import { useCreateBlockNote } from "@blocknote/react";
+import { createMarkdownAdapter } from "./ai/EditorAdapter";
+import type { EditorAdapter } from "./ai/EditorAdapter";
 
 interface MarkdownEditorProps {
   documentId: string;
@@ -21,6 +23,11 @@ export function MarkdownEditor({ documentId }: MarkdownEditorProps) {
   const saveTimeout = useRef<NodeJS.Timeout | null>(null);
   const isNew = useRef(false);
   const editorRef = useRef<BlockNoteEditor | null>(null);
+
+  const adapter = useMemo<EditorAdapter>(
+    () => createMarkdownAdapter(editorRef),
+    [],
+  );
 
   const saveToServer = useCallback(
     async (editor: BlockNoteEditor) => {
@@ -108,43 +115,13 @@ export function MarkdownEditor({ documentId }: MarkdownEditorProps) {
   }
 
   return (
-    <div className="editor-wrapper">
-      <div className="editor-topbar">
-        <button
-          className="editor-back-btn"
-          onClick={() => (window.location.href = "/")}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M10 12L6 8l4-4" />
-          </svg>
-          Back
-        </button>
-        <EditableTitle documentId={documentId} />
-        <div className="editor-topbar__status">
-          <span
-            className={`editor-status-dot editor-status-dot--${saveStatus === "error" ? "error" : saveStatus === "saved" ? "saved" : "saving"}`}
-          />
-          <span>
-            {saveStatus === "saved"
-              ? "Saved"
-              : saveStatus === "saving"
-                ? "Saving..."
-                : "Error"}
-          </span>
-        </div>
-      </div>
-      <div className="markdown-container">
-        <BlockNoteView editor={editor} theme="dark" onChange={handleChange} />
-      </div>
-    </div>
+    <EditorShell
+      documentId={documentId}
+      adapter={adapter}
+      saveStatus={saveStatus}
+      contentClassName="markdown-container"
+    >
+      <BlockNoteView editor={editor} theme="dark" onChange={handleChange} />
+    </EditorShell>
   );
 }

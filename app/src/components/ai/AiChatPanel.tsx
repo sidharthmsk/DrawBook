@@ -1,50 +1,20 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Editor } from "tldraw";
+import type { EditorAdapter } from "./EditorAdapter";
 
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
-}
-
-function getCanvasContext(editor: Editor): string {
-  const shapes = editor.getCurrentPageShapes();
-  if (shapes.length === 0) return "The canvas is empty.";
-
-  const descriptions: string[] = [];
-  for (const shape of shapes.slice(0, 50)) {
-    const props = shape.props as Record<string, unknown>;
-    const bounds = editor.getShapePageBounds(shape.id);
-    const parts: string[] = [`${shape.type}`];
-
-    if (bounds) {
-      parts.push(`at (${Math.round(bounds.x)},${Math.round(bounds.y)})`);
-      parts.push(`${Math.round(bounds.width)}x${Math.round(bounds.height)}`);
-    }
-
-    if (typeof props.text === "string" && props.text.trim()) {
-      parts.push(`"${props.text.trim().slice(0, 100)}"`);
-    }
-
-    if (typeof props.geo === "string") {
-      parts.push(props.geo);
-    }
-
-    descriptions.push(parts.join(" "));
-  }
-
-  const summary = `${shapes.length} shape(s) on canvas:\n${descriptions.join("\n")}`;
-  if (shapes.length > 50) {
-    return `${summary}\n... and ${shapes.length - 50} more shapes`;
-  }
-  return summary;
+  aiContent?: string;
+  aiContentType?: string;
+  applied?: boolean;
 }
 
 interface AiChatPanelProps {
-  editor: Editor;
+  adapter: EditorAdapter;
   onClose: () => void;
 }
 
-export function AiChatPanel({ editor, onClose }: AiChatPanelProps) {
+export function AiChatPanel({ adapter, onClose }: AiChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -72,14 +42,18 @@ export function AiChatPanel({ editor, onClose }: AiChatPanelProps) {
     setError(null);
 
     try {
-      const canvasContext = getCanvasContext(editor);
+      const canvasContext = adapter.getContext();
 
       const response = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: updatedMessages,
+          messages: updatedMessages.map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
           canvasContext,
+          editorType: adapter.type,
         }),
       });
 
@@ -91,14 +65,27 @@ export function AiChatPanel({ editor, onClose }: AiChatPanelProps) {
         );
       }
 
-      const { message } = (await response.json()) as { message: string };
-      setMessages((prev) => [...prev, { role: "assistant", content: message }]);
+      const data = (await response.json()) as {
+        message: string;
+        content?: string;
+        contentType?: string;
+      };
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: data.message,
+          aiContent: data.content,
+          aiContentType: data.contentType,
+        },
+      ]);
     } catch (e: any) {
       setError(e?.message || "Failed to get response");
     } finally {
       setLoading(false);
     }
-  }, [input, messages, loading, editor]);
+  }, [input, messages, loading, adapter]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -110,29 +97,44 @@ export function AiChatPanel({ editor, onClose }: AiChatPanelProps) {
     [sendMessage],
   );
 
+  const handleApply = useCallback(
+    (index: number) => {
+      const msg = messages[index];
+      if (!msg?.aiContent) return;
+
+      adapter.applyContent(msg.aiContent);
+      setMessages((prev) =>
+        prev.map((m, i) => (i === index ? { ...m, applied: true } : m)),
+      );
+    },
+    [messages, adapter],
+  );
+
   const handleDescribe = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const shapes = editor.getCurrentPageShapes();
-      if (shapes.length === 0) {
+      const context = adapter.getContext();
+      if (
+        context === "The canvas is empty." ||
+        context === "The document is empty." ||
+        context === "Editor not loaded."
+      ) {
         setMessages((prev) => [
           ...prev,
           {
             role: "assistant",
-            content: "The canvas is empty. Add some shapes and try again!",
+            content: "The editor is empty. Add some content and try again!",
           },
         ]);
         return;
       }
 
-      const canvasContext = getCanvasContext(editor);
-
       const response = await fetch("/api/ai/describe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shapes: canvasContext }),
+        body: JSON.stringify({ shapes: context, editorType: adapter.type }),
       });
 
       if (!response.ok) {
@@ -144,27 +146,27 @@ export function AiChatPanel({ editor, onClose }: AiChatPanelProps) {
       };
       setMessages((prev) => [
         ...prev,
-        { role: "user", content: "Describe what's on the canvas" },
+        { role: "user", content: "Describe what's in the editor" },
         { role: "assistant", content: description },
       ]);
     } catch (e: any) {
-      setError(e?.message || "Failed to describe canvas");
+      setError(e?.message || "Failed to describe content");
     } finally {
       setLoading(false);
     }
-  }, [editor]);
+  }, [adapter]);
 
   const handleSuggest = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const canvasContext = getCanvasContext(editor);
+      const canvasContext = adapter.getContext();
 
       const response = await fetch("/api/ai/suggest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ canvasContext }),
+        body: JSON.stringify({ canvasContext, editorType: adapter.type }),
       });
 
       if (!response.ok) {
@@ -176,7 +178,7 @@ export function AiChatPanel({ editor, onClose }: AiChatPanelProps) {
       };
       setMessages((prev) => [
         ...prev,
-        { role: "user", content: "Suggest improvements for my canvas" },
+        { role: "user", content: "Suggest improvements" },
         { role: "assistant", content: suggestions },
       ]);
     } catch (e: any) {
@@ -184,7 +186,10 @@ export function AiChatPanel({ editor, onClose }: AiChatPanelProps) {
     } finally {
       setLoading(false);
     }
-  }, [editor]);
+  }, [adapter]);
+
+  const applyLabel =
+    adapter.type === "markdown" ? "Apply to Document" : "Apply to Canvas";
 
   return (
     <div className="ai-chat-panel">
@@ -204,7 +209,7 @@ export function AiChatPanel({ editor, onClose }: AiChatPanelProps) {
             <path d="M9 22h6" />
           </svg>
           <span>AI Assistant</span>
-          <span className="ai-chat-panel__badge">Kimi K2</span>
+          <span className="ai-chat-panel__badge">Groq</span>
         </div>
         <button className="ai-chat-panel__close" onClick={onClose}>
           <svg
@@ -240,7 +245,7 @@ export function AiChatPanel({ editor, onClose }: AiChatPanelProps) {
             <circle cx="11" cy="11" r="8" />
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
-          Describe Canvas
+          Describe Content
         </button>
         <button
           className="ai-chat-panel__action-btn"
@@ -265,12 +270,11 @@ export function AiChatPanel({ editor, onClose }: AiChatPanelProps) {
         {messages.length === 0 && (
           <div className="ai-chat-panel__empty">
             <p>
-              Ask me anything about your canvas, get design feedback, or
-              brainstorm ideas.
+              Ask me anything about your{" "}
+              {adapter.type === "markdown" ? "document" : "canvas"}, get
+              feedback, or brainstorm ideas.
             </p>
-            <p className="ai-chat-panel__hint">
-              Powered by Groq &middot; Kimi K2
-            </p>
+            <p className="ai-chat-panel__hint">Powered by Groq</p>
           </div>
         )}
         {messages.map((msg, i) => (
@@ -279,6 +283,43 @@ export function AiChatPanel({ editor, onClose }: AiChatPanelProps) {
             className={`ai-chat-panel__message ai-chat-panel__message--${msg.role}`}
           >
             <div className="ai-chat-panel__message-content">{msg.content}</div>
+            {msg.role === "assistant" && msg.aiContent && (
+              <button
+                className={`ai-chat-panel__apply-btn${msg.applied ? " ai-chat-panel__apply-btn--applied" : ""}`}
+                onClick={() => handleApply(i)}
+                disabled={msg.applied}
+              >
+                {msg.applied ? (
+                  <>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    Applied
+                  </>
+                ) : (
+                  <>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                    {applyLabel}
+                  </>
+                )}
+              </button>
+            )}
           </div>
         ))}
         {loading && (
