@@ -232,6 +232,30 @@ If the user is NOT asking you to create content, just respond with helpful text 
       );
     }
 
+    if (editorType === "tldraw") {
+      return (
+        base +
+        `When the user asks you to draw or create something, respond with BOTH:
+1. A brief text explanation of what you created.
+2. A JSON array of shape descriptions wrapped in <tldraw-shapes> tags.
+
+Each shape object must have: type, x, y, w, h. Optional properties: text, color, geo.
+Supported types: geo, text, arrow, note.
+For "geo" shapes, set "geo" to one of: rectangle, ellipse, diamond, triangle, hexagon, star, cloud.
+For "text" shapes, include a "text" property with the text content.
+For "note" shapes, include a "text" property.
+For "arrow" shapes, use "start" {x,y} and "end" {x,y} relative points instead of w/h.
+Keep coordinates relative starting near (0, 0) — they will be offset automatically.
+
+Example:
+<tldraw-shapes>
+[{"type":"geo","x":0,"y":0,"w":200,"h":80,"text":"Start","geo":"rectangle"},{"type":"arrow","x":100,"y":80,"start":{"x":0,"y":0},"end":{"x":0,"y":60}},{"type":"geo","x":0,"y":140,"w":200,"h":80,"text":"End","geo":"rectangle"}]
+</tldraw-shapes>
+
+If the user is NOT asking you to draw something, just respond with helpful text — no shape tags needed.`
+      );
+    }
+
     return base + "Respond helpfully to the user's questions about their work.";
   }
 
@@ -239,6 +263,20 @@ If the user is NOT asking you to create content, just respond with helpful text 
     text: string,
     editorType: string,
   ): { message: string; content?: string; contentType?: string } {
+    if (editorType === "tldraw") {
+      const match = text.match(/<tldraw-shapes>([\s\S]*?)<\/tldraw-shapes>/);
+      if (match) {
+        const message = text
+          .replace(/<tldraw-shapes>[\s\S]*?<\/tldraw-shapes>/, "")
+          .trim();
+        return {
+          message: message || "Here are the shapes I created.",
+          content: match[1].trim(),
+          contentType: "tldraw-json",
+        };
+      }
+    }
+
     if (editorType === "excalidraw") {
       const match = text.match(
         /<excalidraw-elements>([\s\S]*?)<\/excalidraw-elements>/,
