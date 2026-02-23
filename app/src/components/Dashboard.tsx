@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { useConfirm } from "./ConfirmDialog";
+import { MindMapView } from "./MindMapView";
 
 type DocumentType =
   | "tldraw"
@@ -538,6 +539,21 @@ export function Dashboard({ config }: { config: AppConfig }) {
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
   const lastSelectedIndex = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [viewMode, setViewMode] = useState<"list" | "mindmap">(() => {
+    try {
+      return (
+        (localStorage.getItem("drawbook_view_mode") as "list" | "mindmap") ||
+        "list"
+      );
+    } catch {
+      return "list";
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem("drawbook_view_mode", viewMode);
+  }, [viewMode]);
 
   const SIDEBAR_MIN = 200;
   const SIDEBAR_MAX = 500;
@@ -1279,6 +1295,47 @@ export function Dashboard({ config }: { config: AppConfig }) {
               />
             </div>
 
+            <div className="view-toggle">
+              <button
+                className={`view-toggle__btn ${viewMode === "list" ? "view-toggle__btn--active" : ""}`}
+                onClick={() => setViewMode("list")}
+                title="List view"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                >
+                  <path d="M2 4h12M2 8h12M2 12h12" />
+                </svg>
+              </button>
+              <button
+                className={`view-toggle__btn ${viewMode === "mindmap" ? "view-toggle__btn--active" : ""}`}
+                onClick={() => setViewMode("mindmap")}
+                title="Mind map view"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="8" cy="3" r="2" />
+                  <circle cx="3" cy="11" r="2" />
+                  <circle cx="13" cy="11" r="2" />
+                  <path d="M8 5v2M6.5 8.5L4.5 9.5M9.5 8.5L11.5 9.5" />
+                </svg>
+              </button>
+            </div>
+
             <button
               className="icon-action-btn"
               onClick={() => fileInputRef.current?.click()}
@@ -1356,6 +1413,34 @@ export function Dashboard({ config }: { config: AppConfig }) {
           <div className="empty-state">
             <p>{error}</p>
           </div>
+        ) : viewMode === "mindmap" ? (
+          <MindMapView
+            docs={allDocs}
+            folders={folders}
+            expandedFolders={expandedFolders}
+            onToggleFolder={toggleExpand}
+            onOpenDocument={(docId) => {
+              const doc = allDocs.find((d) => d.id === docId);
+              if (doc) openDoc(doc);
+            }}
+            onCreateDocument={(folderId, type) => {
+              if (folderId) setCurrentFolder(folderId);
+              createNewDocument(type);
+            }}
+            onCreateFolder={(parentId) => {
+              setCreatingFolder(parentId ?? "__root__");
+            }}
+            onRenameDocument={(docId) => {
+              const doc = allDocs.find((d) => d.id === docId);
+              if (doc) startRename(doc.id, "doc", doc.name);
+            }}
+            onRenameFolder={(folderId) => {
+              const folder = folders.find((f) => f.id === folderId);
+              if (folder) startRename(folder.id, "folder", folder.name);
+            }}
+            onDeleteDocument={deleteDoc}
+            onDeleteFolder={deleteFolder}
+          />
         ) : visibleDocs.length === 0 ? (
           <div className="empty-state">
             <h3>No documents yet</h3>
