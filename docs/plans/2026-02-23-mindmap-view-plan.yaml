@@ -1,0 +1,322 @@
+title: Mind Map Dashboard View — Implementation Plan
+date: 2026-02-23
+goal: Add a React Flow mind map as an alternative Dashboard view with full CRUD on files/folders
+architecture: React Flow v12 with dagre auto-layout, integrated into existing Dashboard.tsx via view toggle, reusing existing API endpoints and state
+tech_stack: "@xyflow/react, dagre, React 18, plain CSS with existing design tokens"
+sub_skill: "superpowers:executing-plans"
+
+tasks:
+
+  - id: 1
+    name: Install dependencies
+    files:
+      modify: app/package.json
+    steps:
+      - step: Install React Flow and dagre
+        run: "cd app && npm install @xyflow/react dagre @types/dagre"
+      - step: Verify installation
+        run: "cd app && npm ls @xyflow/react dagre"
+      - step: Commit
+        run: "git add app/package.json app/package-lock.json && git commit -m 'feat: add @xyflow/react and dagre dependencies'"
+
+  - id: 2
+    name: Create useAutoLayout hook
+    files:
+      create: app/src/components/mindmap/useAutoLayout.ts
+    steps:
+      - step: "Write the hook"
+        description: |
+          Create useAutoLayout.ts that takes an array of DocumentItem and Folder,
+          transforms them into React Flow nodes and edges, and runs dagre layout.
+
+          Key details:
+          - Import dagre, use daglib.Graph with rankdir 'TB' (top-to-bottom) or 'LR'
+          - Create a virtual root node (id: '__root__', label: 'Home')
+          - Folder nodes: type 'folderNode', data { folder, isExpanded }
+          - File nodes: type 'fileNode', data { document }
+          - Edges: from folder.id to child folder/file id
+          - Root-level items (folderId/parentId === null) connect to __root__
+          - Node dimensions: folders 180x50, files 160x40
+          - Return { nodes, edges } compatible with React Flow
+
+          Interface:
+            useAutoLayout(docs: DocumentItem[], folders: Folder[], expandedFolders: Set<string>)
+              => { nodes: Node[], edges: Edge[] }
+
+          Collapsed folders should hide their descendant nodes/edges.
+      - step: Commit
+        run: "git add app/src/components/mindmap/useAutoLayout.ts && git commit -m 'feat: add useAutoLayout hook for mind map dagre layout'"
+
+  - id: 3
+    name: Create FileNode custom component
+    files:
+      create: app/src/components/mindmap/FileNode.tsx
+    steps:
+      - step: "Write the component"
+        description: |
+          Custom React Flow node for files. Receives NodeProps with data: { document: DocumentItem }.
+
+          Structure:
+          - Wrapper div with class 'mindmap-file-node'
+          - Use existing TYPE_ICONS mapping (import from Dashboard or extract to shared file)
+          - Show icon + document.name
+          - Color-coded left border using existing type color mapping
+          - Handle<Position.Top> as target (incoming edge from parent folder)
+          - onClick calls onOpenDocument (passed via data prop)
+          - onDoubleClick enters rename mode (inline input, same pattern as Dashboard lines 939-985)
+
+          Style with existing design tokens:
+            background: var(--bg-surface-2)
+            border: 1px solid var(--border-subtle)
+            border-left: 3px solid [type color]
+            border-radius: var(--radius-sm)
+            color: var(--text-primary)
+            font-size: 13px
+            padding: 6px 10px
+      - step: Commit
+        run: "git add app/src/components/mindmap/FileNode.tsx && git commit -m 'feat: add FileNode component for mind map'"
+
+  - id: 4
+    name: Create FolderNode custom component
+    files:
+      create: app/src/components/mindmap/FolderNode.tsx
+    steps:
+      - step: "Write the component"
+        description: |
+          Custom React Flow node for folders. Receives NodeProps with data: { folder: Folder, isExpanded: boolean, onToggle, docCount }.
+
+          Structure:
+          - Wrapper div with class 'mindmap-folder-node'
+          - Folder icon (from existing IconFolder) + folder.name + chevron for expand/collapse
+          - Document count badge
+          - Handle<Position.Top> as target, Handle<Position.Bottom> as source
+          - onClick toggles expand/collapse
+          - onDoubleClick enters rename mode
+          - Drop target highlight when dragging files over (use onDragOver/onDrop)
+
+          Style:
+            background: var(--bg-surface-1)
+            border: 1px solid var(--border-subtle)
+            border-radius: var(--radius-md)
+            color: var(--text-primary)
+            font-size: 14px
+            font-weight: 500
+            padding: 8px 12px
+            min-width: 140px
+
+          Virtual root node (__root__):
+            Special styling — larger, accent border, "Home" label with home icon
+      - step: Commit
+        run: "git add app/src/components/mindmap/FolderNode.tsx && git commit -m 'feat: add FolderNode component for mind map'"
+
+  - id: 5
+    name: Create MindMapContextMenu component
+    files:
+      create: app/src/components/mindmap/MindMapContextMenu.tsx
+    steps:
+      - step: "Write the component"
+        description: |
+          Right-click context menu for mind map nodes. Follows existing DocContextMenu pattern (Dashboard.tsx lines 426-510).
+
+          Props:
+            position: { x: number, y: number } | null
+            nodeType: 'folder' | 'file' | 'root' | null
+            nodeId: string | null
+            onCreateFile: (folderId: string, type: DocumentType) => void
+            onCreateFolder: (parentId: string) => void
+            onRename: (id: string) => void
+            onDelete: (id: string) => void
+            onClose: () => void
+
+          Menu items vary by nodeType:
+            folder/root: New File (submenu with types), New Subfolder, Rename*, Delete*
+            file: Open, Rename, Delete
+            * Rename/Delete hidden for root node
+
+          Positioning: absolute, portal to body, same pattern as Dashboard context menu (lines 1609-1629)
+          Close on click outside or Escape
+
+          Style: match existing context menu styles from index.css
+      - step: Commit
+        run: "git add app/src/components/mindmap/MindMapContextMenu.tsx && git commit -m 'feat: add context menu for mind map CRUD'"
+
+  - id: 6
+    name: Create MindMapView main component
+    files:
+      create: app/src/components/MindMapView.tsx
+    steps:
+      - step: "Write the component"
+        description: |
+          Main mind map component that wraps React Flow.
+
+          Props (from Dashboard):
+            docs: DocumentItem[]
+            folders: Folder[]
+            expandedFolders: Set<string>
+            onToggleFolder: (folderId: string) => void
+            onOpenDocument: (docId: string, type: DocumentType) => void
+            onCreateDocument: (folderId: string | null, type: DocumentType) => void
+            onCreateFolder: (parentId: string | null) => void
+            onRenameDocument: (docId: string, newName: string) => void
+            onRenameFolder: (folderId: string, newName: string) => void
+            onMoveDocument: (docId: string, targetFolderId: string | null) => void
+            onMoveFolder: (folderId: string, targetParentId: string | null) => void
+            onDeleteDocument: (docId: string) => void
+            onDeleteFolder: (folderId: string) => void
+
+          Structure:
+          - Import ReactFlow, Controls, Background from @xyflow/react
+          - Import @xyflow/react/dist/style.css
+          - Register custom nodeTypes: { fileNode: FileNode, folderNode: FolderNode }
+          - Use useAutoLayout to get nodes/edges
+          - ReactFlow with:
+              nodes, edges
+              nodeTypes
+              fitView
+              minZoom={0.1} maxZoom={2}
+              proOptions={{ hideAttribution: false }}
+          - Controls component for zoom buttons
+          - Background component with dots pattern
+          - MindMapContextMenu triggered on onNodeContextMenu and onPaneContextMenu
+          - Node drag: onNodeDragStop — detect if dropped on a folder node, call onMove
+          - "Fit View" button in top-right corner
+
+          Wrapper div with class 'mindmap-view', height 100%
+
+      - step: Commit
+        run: "git add app/src/components/MindMapView.tsx && git commit -m 'feat: add MindMapView main component'"
+
+  - id: 7
+    name: Add mind map CSS styles
+    files:
+      modify: app/src/index.css
+    steps:
+      - step: "Add mind map styles to index.css"
+        description: |
+          Add styles at end of index.css (before media queries section ~line 890).
+          Use existing design tokens. BEM naming.
+
+          Styles needed:
+          - .mindmap-view (full height container, position relative)
+          - .mindmap-file-node (file node styling as described in task 3)
+          - .mindmap-folder-node (folder node styling as described in task 4)
+          - .mindmap-folder-node--root (virtual root special style)
+          - .mindmap-folder-node--drop-target (highlight on drag over)
+          - .mindmap-node__icon (inline icon sizing)
+          - .mindmap-node__label (text styling, truncation)
+          - .mindmap-node__label--editing (inline rename input)
+          - .mindmap-node__badge (doc count badge)
+          - .mindmap-node__chevron (expand/collapse arrow)
+          - .mindmap-controls (fit-view button position)
+          - .view-toggle (toggle button group in toolbar)
+          - .view-toggle__btn (individual toggle button)
+          - .view-toggle__btn--active (active state with accent)
+
+          Also add responsive rules in the media query sections for tablet/mobile.
+      - step: Commit
+        run: "git add app/src/index.css && git commit -m 'feat: add mind map CSS styles'"
+
+  - id: 8
+    name: Integrate MindMapView into Dashboard
+    files:
+      modify: "app/src/components/Dashboard.tsx"
+    steps:
+      - step: "Extract shared type/icon definitions"
+        description: |
+          The TYPE_ICONS, TYPE_LABELS, TYPE_COLORS records and SVG icon components
+          (lines 81-357) will be needed by mind map nodes. Either:
+          A) Export them from Dashboard and import in mind map components, or
+          B) Extract to a shared file app/src/components/shared/documentTypes.ts
+
+          Option A is simpler for now — just add 'export' to the relevant declarations.
+
+      - step: "Add view mode state"
+        description: |
+          Near line 519-540 (state declarations), add:
+
+          const [viewMode, setViewMode] = useState<'list' | 'mindmap'>(() => {
+            try { return (localStorage.getItem('drawbook_view_mode') as 'list' | 'mindmap') || 'list'; }
+            catch { return 'list'; }
+          });
+
+          Add effect to persist:
+          useEffect(() => {
+            localStorage.setItem('drawbook_view_mode', viewMode);
+          }, [viewMode]);
+
+      - step: "Add view toggle UI"
+        description: |
+          In the toolbar area (near line 1360-1390, where search and create buttons are),
+          add a toggle group:
+
+          <div className="view-toggle">
+            <button
+              className={`view-toggle__btn ${viewMode === 'list' ? 'view-toggle__btn--active' : ''}`}
+              onClick={() => setViewMode('list')}
+              title="List view"
+            >
+              {/* List icon SVG */}
+            </button>
+            <button
+              className={`view-toggle__btn ${viewMode === 'mindmap' ? 'view-toggle__btn--active' : ''}`}
+              onClick={() => setViewMode('mindmap')}
+              title="Mind map view"
+            >
+              {/* Mind map icon SVG */}
+            </button>
+          </div>
+
+      - step: "Conditionally render MindMapView"
+        description: |
+          In the main content area (around lines 1395-1600), wrap the existing doc-list
+          in a conditional:
+
+          {viewMode === 'mindmap' ? (
+            <MindMapView
+              docs={visibleDocs}
+              folders={folders}
+              expandedFolders={expandedFolders}
+              onToggleFolder={(id) => setExpandedFolders(prev => { ... })}
+              onOpenDocument={(id, type) => navigate(`/${type}/${id}`)}
+              onCreateDocument={handleCreateDoc}
+              onCreateFolder={handleCreateFolder}
+              onRenameDocument={handleRenameDoc}
+              onRenameFolder={handleRenameFolder}
+              onMoveDocument={handleMoveDoc}
+              onMoveFolder={handleMoveFolder}
+              onDeleteDocument={handleDeleteDoc}
+              onDeleteFolder={handleDeleteFolder}
+            />
+          ) : (
+            /* existing doc-list JSX */
+          )}
+
+          Most handler functions already exist in Dashboard. Wire them through.
+
+      - step: Commit
+        run: "git add app/src/components/Dashboard.tsx && git commit -m 'feat: integrate mind map view into Dashboard with view toggle'"
+
+  - id: 9
+    name: Manual testing and polish
+    steps:
+      - step: "Start dev server and test"
+        run: "cd app && npm run dev"
+        test_checklist:
+          - View toggle switches between list and mind map
+          - Mind map shows correct folder/file hierarchy
+          - Folders expand/collapse
+          - Click file node opens document
+          - Right-click shows context menu
+          - Create file from context menu works
+          - Create subfolder works
+          - Rename via double-click works
+          - Drag file to different folder reparents it
+          - Delete from context menu works with confirmation
+          - Zoom/pan works smoothly
+          - Fit to view button works
+          - View mode persists across page reload
+          - Empty state shows prompt when no documents
+          - Responsive behavior on smaller screens
+      - step: Fix any issues found
+      - step: Final commit
+        run: "git add -A && git commit -m 'feat: mind map dashboard view - polish and fixes'"

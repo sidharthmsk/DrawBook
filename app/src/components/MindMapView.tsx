@@ -1,19 +1,22 @@
-import { useCallback, useState, useRef } from "react";
+import { useCallback, useState, useRef, useEffect } from "react";
 import {
   ReactFlow,
   Controls,
   Background,
   BackgroundVariant,
   useReactFlow,
+  useNodesState,
+  useEdgesState,
   ReactFlowProvider,
   type NodeMouseHandler,
+  type Node,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
 import { FileNode } from "./mindmap/FileNode";
 import { FolderNode } from "./mindmap/FolderNode";
 import { MindMapContextMenu } from "./mindmap/MindMapContextMenu";
-import { useAutoLayout } from "./mindmap/useAutoLayout";
+import { useAutoLayout, getDescendantFolderIds } from "./mindmap/useAutoLayout";
 
 type DocumentType =
   | "tldraw"
@@ -51,12 +54,47 @@ interface MindMapViewProps {
   onRenameFolder: (folderId: string) => void;
   onDeleteDocument: (docId: string) => void;
   onDeleteFolder: (folderId: string) => void;
+  onMoveDocument: (docId: string, targetFolderId: string | null) => void;
+  onMoveFolder: (folderId: string, targetParentId: string | null) => void;
 }
 
 const nodeTypes = {
   fileNode: FileNode,
   folderNode: FolderNode,
 };
+
+const ROOT_ID = "__root__";
+const HIT_DISTANCE = 130;
+
+function findNearestFolderNode(
+  draggedNode: Node,
+  allNodes: Node[],
+  draggedNodeId: string,
+): string | null {
+  const dx = draggedNode.position.x + (draggedNode.measured?.width ?? 160) / 2;
+  const dy = draggedNode.position.y + (draggedNode.measured?.height ?? 40) / 2;
+
+  let closest: string | null = null;
+  let closestDist = Infinity;
+
+  for (const n of allNodes) {
+    if (n.id === draggedNodeId) continue;
+    if (n.type !== "folderNode") continue;
+
+    const nw = n.measured?.width ?? 180;
+    const nh = n.measured?.height ?? 50;
+    const ncx = n.position.x + nw / 2;
+    const ncy = n.position.y + nh / 2;
+
+    const dist = Math.hypot(dx - ncx, dy - ncy);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closest = n.id;
+    }
+  }
+
+  return closestDist <= HIT_DISTANCE ? closest : null;
+}
 
 function MindMapViewInner({
   docs,
@@ -70,9 +108,27 @@ function MindMapViewInner({
   onRenameFolder,
   onDeleteDocument,
   onDeleteFolder,
+  onMoveDocument,
+  onMoveFolder,
 }: MindMapViewProps) {
   const { fitView } = useReactFlow();
-  const { nodes, edges } = useAutoLayout(docs, folders, expandedFolders);
+
+  const layoutResult = useAutoLayout(docs, folders, expandedFolders);
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(layoutResult.nodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(layoutResult.edges);
+
+  useEffect(() => {
+    setNodes(layoutResult.nodes);
+    setEdges(layoutResult.edges);
+  }, [layoutResult, setNodes, setEdges]);
+
+  const dragRef = useRef<{
+    draggedNodeId: string;
+    dropTargetId: string | null;
+    isInvalidDrop: boolean;
+  } | null>(null);
+  const dragStarted = useRef(false);
 
   const [contextMenu, setContextMenu] = useState<{
     position: { x: number; y: number };
@@ -92,6 +148,7 @@ function MindMapViewInner({
 
   const onNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
+      if (dragStarted.current) return;
       if (node.type === "fileNode") {
         onOpenDocument(node.id);
       } else if (node.type === "folderNode") {
@@ -103,6 +160,181 @@ function MindMapViewInner({
       }
     },
     [onOpenDocument, onToggleFolder, schedulefit],
+  );
+
+  const applyDragHighlights = useCallback(
+    (
+      draggedNodeId: string,
+      dropTargetId: string | null,
+      isInvalidDrop: boolean,
+    ) => {
+      setNodes((nds) =>
+        nds.map((n) => {
+          const data = n.data as Record<string, unknown>;
+          const isDraggedNode = n.id === draggedNodeId;
+          const isDropTarget =
+            n.id === dropTargetId && n.type === "folderNode" && !isInvalidDrop;
+          const isInvalidTarget =
+            n.id === dropTargetId && n.type === "folderNode" && isInvalidDrop;
+
+          if (
+            data.isDragging === isDraggedNode &&
+            data.isDragTarget === isDropTarget &&
+            data.isInvalidTarget === isInvalidTarget
+          ) {
+            return n;
+          }
+
+          return {
+            ...n,
+            data: {
+              ...data,
+              isDragging: isDraggedNode,
+              isDragTarget: isDropTarget,
+              isInvalidTarget: isInvalidTarget,
+            },
+          };
+        }),
+      );
+    },
+    [setNodes],
+  );
+
+  const clearDragHighlights = useCallback(() => {
+    setNodes((nds) =>
+      nds.map((n) => {
+        const data = n.data as Record<string, unknown>;
+        if (!data.isDragging && !data.isDragTarget && !data.isInvalidTarget) {
+          return n;
+        }
+        return {
+          ...n,
+          data: {
+            ...data,
+            isDragging: false,
+            isDragTarget: false,
+            isInvalidTarget: false,
+          },
+        };
+      }),
+    );
+  }, [setNodes]);
+
+  const handleNodeDragStart: NodeMouseHandler = useCallback(
+    (_event, node) => {
+      if ((node.data as Record<string, unknown>).isRoot) return;
+
+      dragStarted.current = true;
+      dragRef.current = {
+        draggedNodeId: node.id,
+        dropTargetId: null,
+        isInvalidDrop: false,
+      };
+
+      applyDragHighlights(node.id, null, false);
+    },
+    [applyDragHighlights],
+  );
+
+  const handleNodeDrag: NodeMouseHandler = useCallback(
+    (_event, node) => {
+      if (!dragRef.current) return;
+
+      const currentNodes = nodes;
+      const targetId = findNearestFolderNode(
+        node,
+        currentNodes,
+        dragRef.current.draggedNodeId,
+      );
+
+      let isInvalid = false;
+      if (targetId) {
+        const draggedIsFolder = folders.some(
+          (f) => f.id === dragRef.current!.draggedNodeId,
+        );
+        if (draggedIsFolder) {
+          if (targetId === dragRef.current.draggedNodeId) {
+            isInvalid = true;
+          } else {
+            const descendants = getDescendantFolderIds(
+              dragRef.current.draggedNodeId,
+              folders,
+            );
+            if (descendants.has(targetId)) {
+              isInvalid = true;
+            }
+          }
+          const draggedFolder = folders.find(
+            (f) => f.id === dragRef.current!.draggedNodeId,
+          );
+          const currentParent = draggedFolder?.parentId ?? ROOT_ID;
+          if (targetId === currentParent) {
+            isInvalid = true;
+          }
+        } else {
+          const draggedDoc = docs.find(
+            (d) => d.id === dragRef.current!.draggedNodeId,
+          );
+          const currentParent = draggedDoc?.folderId ?? ROOT_ID;
+          if (targetId === currentParent) {
+            isInvalid = true;
+          }
+        }
+      }
+
+      if (
+        targetId !== dragRef.current.dropTargetId ||
+        isInvalid !== dragRef.current.isInvalidDrop
+      ) {
+        dragRef.current.dropTargetId = targetId;
+        dragRef.current.isInvalidDrop = isInvalid;
+        applyDragHighlights(dragRef.current.draggedNodeId, targetId, isInvalid);
+      }
+    },
+    [nodes, folders, docs, applyDragHighlights],
+  );
+
+  const handleNodeDragStop: NodeMouseHandler = useCallback(
+    (_event, _node) => {
+      if (!dragRef.current) return;
+
+      const { draggedNodeId, dropTargetId, isInvalidDrop } = dragRef.current;
+
+      dragRef.current = null;
+      clearDragHighlights();
+
+      setTimeout(() => {
+        dragStarted.current = false;
+      }, 50);
+
+      if (isInvalidDrop) return;
+
+      const targetFolderId =
+        dropTargetId === ROOT_ID ? null : (dropTargetId ?? null);
+
+      const isFolder = folders.some((f) => f.id === draggedNodeId);
+      if (isFolder) {
+        const folder = folders.find((f) => f.id === draggedNodeId);
+        const currentParent = folder?.parentId ?? null;
+        if (targetFolderId === currentParent) return;
+        onMoveFolder(draggedNodeId, targetFolderId);
+      } else {
+        const doc = docs.find((d) => d.id === draggedNodeId);
+        const currentParent = doc?.folderId ?? null;
+        if (targetFolderId === currentParent) return;
+        onMoveDocument(draggedNodeId, targetFolderId);
+      }
+
+      schedulefit();
+    },
+    [
+      folders,
+      docs,
+      onMoveDocument,
+      onMoveFolder,
+      schedulefit,
+      clearDragHighlights,
+    ],
   );
 
   const onNodeContextMenu: NodeMouseHandler = useCallback((event, node) => {
@@ -132,7 +364,7 @@ function MindMapViewInner({
       setContextMenu({
         position: { x: event.clientX, y: event.clientY },
         nodeType: "root",
-        nodeId: "__root__",
+        nodeId: ROOT_ID,
       });
     },
     [],
@@ -145,17 +377,20 @@ function MindMapViewInner({
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
         onNodeClick={onNodeClick}
+        onNodeDragStart={handleNodeDragStart}
+        onNodeDrag={handleNodeDrag}
+        onNodeDragStop={handleNodeDragStop}
         onNodeContextMenu={onNodeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
         fitView
         minZoom={0.1}
         maxZoom={2}
         proOptions={{ hideAttribution: false }}
-        nodesDraggable={false}
         nodesConnectable={false}
-        elementsSelectable={false}
       >
         <Controls showInteractive={false} />
         <Background

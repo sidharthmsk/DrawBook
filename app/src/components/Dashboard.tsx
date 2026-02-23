@@ -1440,6 +1440,46 @@ export function Dashboard({ config }: { config: AppConfig }) {
             }}
             onDeleteDocument={deleteDoc}
             onDeleteFolder={deleteFolder}
+            onMoveDocument={(docId, targetFolderId) => {
+              const prev = allDocs.map((d) => ({ ...d }));
+              setAllDocs((docs) =>
+                docs.map((d) =>
+                  d.id === docId ? { ...d, folderId: targetFolderId } : d,
+                ),
+              );
+              fetch(`/api/documents/${docId}/move`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ folderId: targetFolderId }),
+              })
+                .then((res) => {
+                  if (!res.ok) throw new Error("Move failed");
+                })
+                .catch((err) => {
+                  console.error("Failed to move document:", err);
+                  setAllDocs(prev);
+                });
+            }}
+            onMoveFolder={(folderId, targetParentId) => {
+              const prev = folders.map((f) => ({ ...f }));
+              setFolders((flds) =>
+                flds.map((f) =>
+                  f.id === folderId ? { ...f, parentId: targetParentId } : f,
+                ),
+              );
+              fetch(`/api/folders/${folderId}/move`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ parentId: targetParentId }),
+              })
+                .then((res) => {
+                  if (!res.ok) throw new Error("Move failed");
+                })
+                .catch((err) => {
+                  console.error("Failed to move folder:", err);
+                  setFolders(prev);
+                });
+            }}
           />
         ) : visibleDocs.length === 0 ? (
           <div className="empty-state">
