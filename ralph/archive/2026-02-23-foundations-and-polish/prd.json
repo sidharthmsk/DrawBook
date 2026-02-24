@@ -1,0 +1,128 @@
+{
+  "project": "Drawbook",
+  "branchName": "ralph/foundations-and-polish",
+  "description": "RAG search foundations, document metadata enrichment, AI panel UX, Excalidraw export, and keyboard shortcuts",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Extend DocMetadata with optional fields for search and ownership",
+      "description": "As a developer, I need richer metadata on documents to support future full-text search and multi-user features.",
+      "acceptanceCriteria": [
+        "DocMetadata in app/server/storage.ts gains optional fields: createdAt?: string, createdBy?: string, modifiedBy?: string, tags?: string[], starred?: boolean",
+        "Existing loadDocMeta still returns { folderId: null } for docs without new fields (backward compatible)",
+        "saveDocMeta accepts the extended type without breaking existing callers",
+        "No existing API responses change shape (new fields are optional additions)",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "This is purely a type extension. Existing code that only sets { folderId, name, type } continues to work. New fields are optional so no migration needed."
+    },
+    {
+      "id": "US-002",
+      "title": "Populate createdAt on document creation",
+      "description": "As a developer, I want documents to track when they were created for sorting and display.",
+      "acceptanceCriteria": [
+        "POST /api/save/:documentId in app/server/index.ts sets createdAt on metadata if it does not already exist",
+        "POST /api/duplicate/:documentId sets createdAt to current time on the new document",
+        "GET /api/documents response includes createdAt for each document (if present)",
+        "Existing documents without createdAt continue to work (field is optional)",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "On save, do: if (!existing.createdAt) existing.createdAt = new Date().toISOString(). On duplicate, always set createdAt. In the /api/documents response, add createdAt: item.meta.createdAt || item.modifiedAt as fallback."
+    },
+    {
+      "id": "US-003",
+      "title": "Add server-side document search endpoint",
+      "description": "As a user, I want to search documents by name from the server so the quick switcher and dashboard search work with large document sets.",
+      "acceptanceCriteria": [
+        "GET /api/documents/search?q=term endpoint in app/server/index.ts",
+        "Returns documents whose name contains the query string (case-insensitive)",
+        "Response shape: { results: [{ id, name, type, folderId, modifiedAt }] }",
+        "Returns empty array for empty query",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Use storage.listDocumentsWithMeta() and filter by name. This is the foundation for future RAG search - later this endpoint will also search content."
+    },
+    {
+      "id": "US-004",
+      "title": "Add star/unstar document API and dashboard UI",
+      "description": "As a user, I want to star important documents for quick access.",
+      "acceptanceCriteria": [
+        "POST /api/documents/:documentId/star endpoint toggles the starred field in metadata",
+        "Returns { starred: boolean } with the new value",
+        "Dashboard document rows show a star icon that is filled when starred",
+        "Clicking the star icon toggles it without refreshing the page",
+        "Starred documents appear first when sort is 'Modified (newest)' (default sort)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Add the star toggle to the doc row in Dashboard.tsx. Use a simple star SVG. Update visibleDocs sort to put starred items first within each sort mode."
+    },
+    {
+      "id": "US-005",
+      "title": "Add copy-to-clipboard button on AI assistant messages",
+      "description": "As a user, I want to copy AI responses to my clipboard.",
+      "acceptanceCriteria": [
+        "Each assistant message in AiChatPanel has a small copy button in the top-right corner",
+        "Clicking copy writes the message content to clipboard via navigator.clipboard.writeText",
+        "Button shows a checkmark icon for 2 seconds after copying",
+        "Button is only visible on hover (not cluttering the UI)",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Add a CopyButton component inside the assistant message div. Use useState for the copied state with a setTimeout to reset."
+    },
+    {
+      "id": "US-006",
+      "title": "Add retry button on AI chat errors",
+      "description": "As a user, I want to retry a failed AI request without retyping my message.",
+      "acceptanceCriteria": [
+        "When an AI chat request fails, a 'Retry' button appears next to the error message",
+        "Clicking Retry resends the last user message with the same context",
+        "The error message is cleared when retrying",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Store the last failed request info (messages array snapshot). On retry, call sendMessage logic with the stored messages. Clear error state on retry."
+    },
+    {
+      "id": "US-007",
+      "title": "Add Excalidraw export as PNG",
+      "description": "As a user, I want to export my Excalidraw drawing as a PNG image.",
+      "acceptanceCriteria": [
+        "ExcalidrawEditor passes an onExport callback to EditorShell",
+        "Clicking the export button calls excalidrawAPI.exportToBlob() to generate a PNG",
+        "The PNG downloads with the document name as filename",
+        "Export button label is 'Export PNG'",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "excalidrawAPI is stored in excalidrawApiRef.current. Use exportToBlob({ mimeType: 'image/png' }). Fetch doc name from /api/meta/:documentId. Create download link via URL.createObjectURL."
+    },
+    {
+      "id": "US-008",
+      "title": "Add global keyboard shortcut Cmd+N for new document from dashboard",
+      "description": "As a user, I want a keyboard shortcut to quickly create a new document.",
+      "acceptanceCriteria": [
+        "Pressing Cmd+N (Mac) or Ctrl+N (Windows/Linux) on the dashboard opens the New dropdown",
+        "Shortcut only works on the dashboard (not inside editors where Cmd+N might conflict)",
+        "Does not interfere with browser's native Cmd+N (new window) when inside an editor",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Add a keydown listener in Dashboard.tsx that sets newDropdownOpen to true on Cmd+N. Use e.preventDefault() to stop the browser default. Only register the listener when the dashboard is mounted."
+    }
+  ]
+}

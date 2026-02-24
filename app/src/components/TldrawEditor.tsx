@@ -10,6 +10,10 @@ import {
 } from "tldraw";
 import { createTldrawAdapter } from "./ai/EditorAdapter";
 import type { EditorAdapter } from "./ai/EditorAdapter";
+import { PreviewShapeUtil } from "./ai/PreviewShape";
+import { MakeRealButton } from "./ai/MakeRealButton";
+
+const customShapeUtils = [...defaultShapeUtils, PreviewShapeUtil];
 
 interface TldrawEditorProps {
   documentId: string;
@@ -28,6 +32,14 @@ export function TldrawEditor({
     "saved" | "saving" | "error" | "syncing"
   >("saved");
   const [adapter, setAdapter] = useState<EditorAdapter | null>(null);
+  const [docName, setDocName] = useState("drawing");
+  const [isDark, setIsDark] = useState(() => {
+    try {
+      return localStorage.getItem("drawbook-tldraw-dark") !== "false";
+    } catch {
+      return true;
+    }
+  });
   const wsRef = useRef<WebSocket | null>(null);
   const isRemoteChange = useRef(false);
   const lastActiveTime = useRef<number>(Date.now());
@@ -94,7 +106,7 @@ export function TldrawEditor({
   const store = useMemo(() => {
     if (initialSnapshot === undefined) return undefined;
 
-    const newStore = createTLStore({ shapeUtils: defaultShapeUtils });
+    const newStore = createTLStore({ shapeUtils: customShapeUtils });
     if (initialSnapshot) {
       newStore.loadSnapshot(initialSnapshot);
     }
@@ -247,10 +259,54 @@ export function TldrawEditor({
     };
   }, [editor, saveDocument]);
 
-  const handleMount = useCallback((editorInstance: Editor) => {
-    setEditor(editorInstance);
-    setAdapter(createTldrawAdapter(editorInstance));
-  }, []);
+  useEffect(() => {
+    fetch(`/api/meta/${documentId}`)
+      .then((r) => r.json())
+      .then((meta) => {
+        if (meta.name) setDocName(meta.name);
+      })
+      .catch(() => {});
+  }, [documentId]);
+
+  const handleExport = useCallback(async () => {
+    if (!editor) return;
+    try {
+      const result = await editor.getSvgString([
+        ...editor.getCurrentPageShapeIds(),
+      ]);
+      if (!result) return;
+      const blob = new Blob([result.svg], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${docName}.svg`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("SVG export failed:", err);
+    }
+  }, [editor, docName]);
+
+  const handleMount = useCallback(
+    (editorInstance: Editor) => {
+      setEditor(editorInstance);
+      setAdapter(createTldrawAdapter(editorInstance));
+      editorInstance.user.updateUserPreferences({
+        colorScheme: isDark ? "dark" : "light",
+      });
+    },
+    [isDark],
+  );
+
+  useEffect(() => {
+    if (!editor) return;
+    editor.user.updateUserPreferences({
+      colorScheme: isDark ? "dark" : "light",
+    });
+    try {
+      localStorage.setItem("drawbook-tldraw-dark", String(isDark));
+    } catch {}
+  }, [editor, isDark]);
 
   if (store === undefined) {
     return (
@@ -266,8 +322,26 @@ export function TldrawEditor({
       documentId={documentId}
       adapter={adapter}
       saveStatus={saveStatus}
+      onExport={handleExport}
+      exportLabel="Export SVG"
     >
-      <Tldraw store={store} onMount={handleMount} autoFocus />
+      <Tldraw
+        store={store}
+        onMount={handleMount}
+        autoFocus
+        shapeUtils={[PreviewShapeUtil]}
+      >
+        <MakeRealButton />
+        <div className="tldraw-theme-toggle">
+          <button
+            className="tldraw-theme-toggle__btn"
+            onClick={() => setIsDark((v) => !v)}
+            title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {isDark ? "☀️" : "🌙"}
+          </button>
+        </div>
+      </Tldraw>
     </EditorShell>
   );
 }

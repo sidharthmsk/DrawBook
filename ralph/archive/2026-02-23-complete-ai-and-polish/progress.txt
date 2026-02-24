@@ -1,0 +1,51 @@
+# Drawbook - Complete AI & Polish
+# Branch: ralph/complete-ai-and-polish
+# Started: 2026-02-23
+
+## Codebase Patterns
+- EditorAdapter pattern: each editor type gets a `create<Type>Adapter()` factory in `app/src/components/ai/EditorAdapter.ts`
+- AI response tags: each editor type uses custom XML-like tags (e.g., `<excalidraw-elements>`, `<tldraw-shapes>`, `<markdown-content>`) in `app/server/ai.ts`
+- `chatSystemPrompt()` and `parseAiResponse()` in `app/server/ai.ts` must be updated in tandem for each new editor type
+- EditorShell integration: editor components pass their adapter to `<EditorShell>` which handles the AI panel toggle
+- tldraw shape IDs must follow the `shape:` prefix format (e.g., `shape:ai-123-0`)
+- Typecheck: run `./node_modules/.bin/tsc --noEmit` from `app/` for client, and `./node_modules/.bin/tsc -p server/tsconfig.json --noEmit` for server
+
+## 2026-02-23 - US-001
+- Implemented `applyContent()` in `createTldrawAdapter` to parse JSON shape descriptions and create tldraw shapes via `editor.createShapes()`
+- Added tldraw-specific system prompt in `chatSystemPrompt()` with shape format instructions
+- Added `<tldraw-shapes>` tag parsing in `parseAiResponse()`
+- Files changed: `app/src/components/ai/EditorAdapter.ts`, `app/server/ai.ts`
+- **Learnings for future iterations:**
+  - tldraw shapes use `TLShapePartial` type and IDs must be prefixed with `shape:`
+  - Shape types: geo (rectangle, ellipse, etc), text, arrow, note
+  - Arrow shapes use `start`/`end` point props instead of w/h
+  - The Excalidraw adapter's `applyContent` is a good reference pattern for offset calculation
+  - Server AI module uses Groq API (not OpenRouter) for chat endpoints
+---
+
+## 2026-02-23 - US-002
+- Added `createDrawioAdapter()` to `EditorAdapter.ts` that accepts an `xmlRef` to the current draw.io XML string
+- `getContext()` parses draw.io XML using regex to extract mxCell elements, identifies shapes (with labels, types) and connections (source/target with optional labels)
+- `applyContent()` is a no-op stub with comment explaining draw.io iframe postMessage limitations
+- Added 'drawio' to the `EditorType` union
+- Files changed: `app/src/components/ai/EditorAdapter.ts`
+- **Learnings for future iterations:**
+  - Draw.io XML uses `<mxCell>` elements with `id`, `value` (label), `style`, `source`, `target` attributes
+  - Cells with id "0" and "1" are root/layer cells and should be skipped
+  - Edges have `source` and `target` attributes pointing to cell IDs
+  - Shape type can be inferred from the `style` attribute (e.g., `ellipse`, `rhombus`, `rounded=1`, `shape=X`)
+  - Draw.io iframe communication uses postMessage with JSON-stringified messages
+---
+
+## 2026-02-23 - US-003
+- Integrated DrawioEditor with EditorShell, replacing custom topbar markup
+- Created drawio adapter via `createDrawioAdapter(xmlRef)` and passed to EditorShell
+- AI toggle button now appears in draw.io editor topbar
+- iframe still fills the editor-canvas area via EditorShell's children slot
+- Files changed: `app/src/components/DrawioEditor.tsx`
+- **Learnings for future iterations:**
+  - EditorShell integration is straightforward: replace `<div className="editor-wrapper">` + topbar markup with `<EditorShell>` wrapper
+  - Adapter can be created in a useEffect and stored in state since the ref is stable
+  - The EditableTitle import is no longer needed when using EditorShell (it provides its own)
+  - Loading overlay and iframe go directly as children of EditorShell
+---

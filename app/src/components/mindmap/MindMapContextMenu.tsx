@@ -6,7 +6,8 @@ type DocumentType =
   | "drawio"
   | "markdown"
   | "spreadsheet"
-  | "kanban";
+  | "kanban"
+  | "code";
 
 interface MindMapContextMenuProps {
   position: { x: number; y: number } | null;
@@ -31,6 +32,7 @@ const FILE_TYPES: { type: DocumentType; label: string; color: string }[] = [
     color: "var(--type-spreadsheet)",
   },
   { type: "kanban", label: "Kanban", color: "var(--type-kanban)" },
+  { type: "code", label: "Code", color: "var(--type-code)" },
 ];
 
 export function MindMapContextMenu({

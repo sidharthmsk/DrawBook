@@ -1,0 +1,197 @@
+{
+  "project": "Drawbook",
+  "branchName": "ralph/ai-chat-enhancements",
+  "description": "AI chat UX overhaul: markdown rendering, streaming, persistence, clear chat, keyboard shortcuts, and editor integration improvements",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add markdown rendering for AI assistant messages",
+      "description": "As a user, I want AI responses rendered as rich markdown with code highlighting.",
+      "acceptanceCriteria": [
+        "Install react-markdown and a syntax highlighter (react-syntax-highlighter or similar lightweight option)",
+        "Assistant messages in AiChatPanel render markdown: headings, bold, italic, lists, links, code blocks",
+        "Code blocks have syntax highlighting with a dark theme matching the app",
+        "User messages remain plain text",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Use react-markdown with rehype-highlight or a lightweight code highlighter. Style the rendered markdown to match the dark theme. Add CSS for .ai-message-markdown with proper spacing."
+    },
+    {
+      "id": "US-002",
+      "title": "Add streaming responses to AI chat",
+      "description": "As a user, I want to see AI responses appear word-by-word as they stream in.",
+      "acceptanceCriteria": [
+        "Server /api/ai/chat endpoint supports streaming via Server-Sent Events when Accept: text/event-stream header is present",
+        "AiChatPanel consumes the SSE stream and appends tokens to the assistant message in real-time",
+        "The typing indicator is replaced by the streaming text",
+        "After streaming completes, the structured content (tldraw-shapes, markdown-content, etc.) is parsed and Apply button appears",
+        "Non-streaming fallback still works if SSE fails",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "In ai.ts, add a streaming branch to callGroq that uses the Groq SDK streaming option. Send chunks as SSE data events. In AiChatPanel, use EventSource or fetch with ReadableStream. Parse the final complete text for structured content tags."
+    },
+    {
+      "id": "US-003",
+      "title": "Persist chat history per document in localStorage",
+      "description": "As a user, I want my AI conversation preserved when I navigate away and come back.",
+      "acceptanceCriteria": [
+        "Chat messages are saved to localStorage keyed by documentId on every new message",
+        "When AiChatPanel mounts, it loads existing messages from localStorage for that document",
+        "Messages are stored as JSON with role, content, and aiContent fields",
+        "Maximum 50 messages stored per document to avoid localStorage bloat",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Use key format 'drawbook-chat-{documentId}'. Save after each sendMessage and after receiving response. Load in useEffect on mount. Trim to last 50 messages on save."
+    },
+    {
+      "id": "US-004",
+      "title": "Add clear conversation button to AI chat panel",
+      "description": "As a user, I want to clear the chat history and start fresh.",
+      "acceptanceCriteria": [
+        "A 'Clear' button (trash icon) appears in the AI chat panel header next to the close button",
+        "Clicking it clears all messages from state and localStorage for the current document",
+        "A confirmation is not needed (instant clear)",
+        "The quick action buttons (Describe, Suggest) reappear after clearing",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Add a button with a trash/clear icon in the header. Reset messages to empty array and remove the localStorage key."
+    },
+    {
+      "id": "US-005",
+      "title": "Add Cmd+Enter keyboard shortcut and focus management to AI chat",
+      "description": "As a user, I want keyboard shortcuts for efficient AI chat interaction.",
+      "acceptanceCriteria": [
+        "Cmd+Enter (Mac) or Ctrl+Enter (Windows) sends the message (in addition to existing Enter)",
+        "Pressing Escape in the textarea closes the AI panel",
+        "When the AI panel opens, the textarea is auto-focused",
+        "Pressing Cmd+Shift+A (Mac) or Ctrl+Shift+A toggles the AI panel from anywhere in the editor",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Add keyboard event handlers in AiChatPanel textarea. Add a global keydown listener in EditorShell for the toggle shortcut. Use a ref to auto-focus the textarea on panel open."
+    },
+    {
+      "id": "US-006",
+      "title": "Add AI chat message timestamps and grouping",
+      "description": "As a user, I want to see when messages were sent and have them visually grouped.",
+      "acceptanceCriteria": [
+        "Each message shows a small timestamp (e.g. '2:34 PM') below the content",
+        "Consecutive messages from the same role are visually grouped (reduced gap between them)",
+        "The timestamp is stored in the message object and persisted",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Add a timestamp field to the message interface. Format with Intl.DateTimeFormat. Add CSS for grouped messages (smaller margin-top when same role as previous)."
+    },
+    {
+      "id": "US-007",
+      "title": "Add AI quick prompts palette for common actions",
+      "description": "As a user, I want quick-access prompts for common AI tasks specific to my editor type.",
+      "acceptanceCriteria": [
+        "Below the existing Describe/Suggest buttons, show 3-4 contextual quick prompts based on editor type",
+        "Markdown: 'Summarize', 'Fix grammar', 'Add table of contents', 'Translate to...'",
+        "Kanban: 'Add sprint tasks', 'Organize by priority', 'Add retrospective columns'",
+        "Excalidraw/tldraw: 'Draw flowchart', 'Create wireframe', 'Add labels'",
+        "Clicking a quick prompt sends it as a user message",
+        "Quick prompts disappear after first user message (same as Describe/Suggest)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Define a QUICK_PROMPTS map keyed by editor type. Render as small pill buttons. On click, call sendMessage with the prompt text."
+    },
+    {
+      "id": "US-008",
+      "title": "Add AI response rating (thumbs up/down) with feedback",
+      "description": "As a user, I want to rate AI responses to help improve quality.",
+      "acceptanceCriteria": [
+        "Each assistant message has thumbs up and thumbs down buttons that appear on hover",
+        "Clicking a thumb highlights it and disables the other",
+        "Rating is stored in the message object and persisted to localStorage",
+        "A POST /api/ai/feedback endpoint accepts { documentId, messageIndex, rating, content } and logs it to console",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Add rating field to message interface. Add the API endpoint in ai.ts. Style thumbs as small icon buttons that appear on hover like the copy button."
+    },
+    {
+      "id": "US-009",
+      "title": "Improve AI describe and suggest with structured output",
+      "description": "As a user, I want describe and suggest to return well-formatted, actionable results.",
+      "acceptanceCriteria": [
+        "The describe endpoint system prompt instructs the model to return a structured description with sections: Overview, Key Elements, Structure",
+        "The suggest endpoint system prompt instructs the model to return numbered suggestions with brief explanations",
+        "Both endpoints include the editor type in their prompts for context-aware responses",
+        "Responses render properly with the new markdown rendering from US-001",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "Update the system prompts in ai.ts for /api/ai/describe and /api/ai/suggest. Make them editor-type-aware and request structured markdown output."
+    },
+    {
+      "id": "US-010",
+      "title": "Wire MakeReal button and PreviewShape into TldrawEditor",
+      "description": "As a user, I want to use the Make Real feature to convert wireframes to HTML in tldraw.",
+      "acceptanceCriteria": [
+        "PreviewShapeUtil is registered in TldrawEditor's shapeUtils array",
+        "MakeRealButton is rendered as a floating button in the TldrawEditor when shapes are selected",
+        "Clicking Make Real exports the selection, calls /api/ai/generate-ui, and creates a preview shape",
+        "The preview shape renders the returned HTML in an iframe",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "Import PreviewShapeUtil and add to shapeUtils. Import MakeRealButton and render it positioned in the editor. Check that the OPENROUTER_API_KEY env var is available for the generate-ui endpoint."
+    },
+    {
+      "id": "US-011",
+      "title": "Add AI chat panel resizable width",
+      "description": "As a user, I want to resize the AI chat panel to see more or less of it.",
+      "acceptanceCriteria": [
+        "The AI chat panel has a draggable left border that allows resizing",
+        "Minimum width: 280px, maximum width: 600px",
+        "The resize handle shows a cursor change on hover",
+        "The width is persisted in localStorage and restored on next open",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "Add a resize handle div on the left edge of the panel. Use mousedown/mousemove/mouseup events to track drag. Store width in localStorage key 'drawbook-ai-panel-width'. Apply as inline style."
+    },
+    {
+      "id": "US-012",
+      "title": "Add AI chat context indicator showing what the AI can see",
+      "description": "As a user, I want to know what content the AI has access to from my editor.",
+      "acceptanceCriteria": [
+        "Above the message input, show a small collapsible 'Context' section",
+        "It displays a truncated preview of what getContext() returns (first 200 chars)",
+        "A 'Refresh' button re-fetches the context from the adapter",
+        "The context updates automatically when the panel opens",
+        "Clicking the context preview expands it to show the full text in a scrollable area",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "Add a contextPreview state that calls adapter.getContext() on mount and on refresh. Render as a small collapsible section with a toggle. Style it as a subtle info bar above the input."
+    }
+  ]
+}

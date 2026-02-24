@@ -9,11 +9,14 @@ import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import multer from "multer";
+import AdmZip from "adm-zip";
 import {
   createStorageAdapter,
   sanitizeDocumentId,
   DocumentType,
   Folder,
+  Template,
+  FleetingNote,
 } from "./storage.js";
 import { createAiRouter } from "./ai.js";
 
@@ -344,6 +347,30 @@ app.post("/api/folders/:folderId/move", async (req, res) => {
 
 // ============ DOCUMENT ENDPOINTS ============
 
+const MAX_VERSIONS = 10;
+const versionStore = new Map<
+  string,
+  Array<{ timestamp: string; snapshot: unknown }>
+>();
+
+// Response cache for expensive endpoints (backlinks, link-graph, content search)
+const responseCache = new Map<string, { data: unknown; time: number }>();
+const RESPONSE_CACHE_TTL = 15_000; // 15 seconds
+
+function getCachedResponse(key: string) {
+  const entry = responseCache.get(key);
+  if (entry && Date.now() - entry.time < RESPONSE_CACHE_TTL) return entry.data;
+  return null;
+}
+
+function setCachedResponse(key: string, data: unknown) {
+  responseCache.set(key, { data, time: Date.now() });
+}
+
+function invalidateResponseCache() {
+  responseCache.clear();
+}
+
 // Save document endpoint
 app.post("/api/save/:documentId", async (req, res) => {
   try {
@@ -354,20 +381,71 @@ app.post("/api/save/:documentId", async (req, res) => {
       return res.status(400).json({ error: "Snapshot is required" });
     }
 
-    await storage.saveDocument(documentId, snapshot);
-
-    if (folderId !== undefined || type !== undefined) {
-      const existing = await storage.loadDocMeta(documentId);
-      if (folderId !== undefined) existing.folderId = folderId;
-      if (type !== undefined) existing.type = type as DocumentType;
-      await storage.saveDocMeta(documentId, existing);
+    const prev = await storage.loadDocument(documentId);
+    if (prev) {
+      const versions = versionStore.get(documentId) || [];
+      versions.push({ timestamp: new Date().toISOString(), snapshot: prev });
+      if (versions.length > MAX_VERSIONS) versions.shift();
+      versionStore.set(documentId, versions);
     }
 
+    await storage.saveDocument(documentId, snapshot);
+
+    const existing = await storage.loadDocMeta(documentId);
+    if (!existing.createdAt) existing.createdAt = new Date().toISOString();
+    if (folderId !== undefined) existing.folderId = folderId;
+    if (type !== undefined) existing.type = type as DocumentType;
+    await storage.saveDocMeta(documentId, existing);
+
+    invalidateResponseCache();
     console.log(`[Server] Saved document: ${documentId}`);
     res.json({ success: true });
   } catch (error) {
     console.error("[Server] Save error:", error);
     res.status(500).json({ error: "Failed to save document" });
+  }
+});
+
+// List version history
+app.get("/api/versions/:documentId", async (req, res) => {
+  try {
+    const { documentId } = req.params;
+    const versions = versionStore.get(documentId) || [];
+    res.json({
+      versions: versions
+        .map((v, i) => ({
+          index: i,
+          timestamp: v.timestamp,
+        }))
+        .reverse(),
+    });
+  } catch (error) {
+    console.error("[Server] Version list error:", error);
+    res.status(500).json({ error: "Failed to list versions" });
+  }
+});
+
+// Restore a version
+app.post("/api/versions/:documentId/restore", async (req, res) => {
+  try {
+    const { documentId } = req.params;
+    const { index } = req.body;
+    const versions = versionStore.get(documentId) || [];
+    if (index < 0 || index >= versions.length) {
+      return res.status(404).json({ error: "Version not found" });
+    }
+    const current = await storage.loadDocument(documentId);
+    if (current) {
+      versions.push({ timestamp: new Date().toISOString(), snapshot: current });
+      if (versions.length > MAX_VERSIONS) versions.shift();
+      versionStore.set(documentId, versions);
+    }
+    await storage.saveDocument(documentId, versions[index].snapshot);
+    console.log(`[Server] Restored version ${index} for ${documentId}`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[Server] Version restore error:", error);
+    res.status(500).json({ error: "Failed to restore version" });
   }
 });
 
@@ -394,16 +472,19 @@ app.get("/api/documents", async (req, res) => {
   try {
     const folderId = req.query.folderId as string | undefined;
     const files = (await storage.listDocumentsWithMeta())
+      .filter((item) => !item.meta.deletedAt)
       .map((item) => ({
         id: item.id,
         name: item.meta.name || item.id,
         folderId: item.meta.folderId,
         type: item.meta.type || typeFromId(item.id),
         modifiedAt: item.modifiedAt,
+        createdAt: item.meta.createdAt || item.modifiedAt,
+        starred: item.meta.starred || false,
+        tags: item.meta.tags || [],
       }))
       .filter((doc) => {
-        // Filter by folder
-        if (folderId === undefined) return true; // Return all
+        if (folderId === undefined) return true;
         if (folderId === "root") return doc.folderId === null;
         return doc.folderId === folderId;
       })
@@ -439,30 +520,525 @@ app.post("/api/documents/:documentId/move", async (req, res) => {
   }
 });
 
-// Delete document endpoint
+// Star/unstar document endpoint
+app.post("/api/documents/:documentId/star", async (req, res) => {
+  try {
+    const { documentId } = req.params;
+    const meta = await storage.loadDocMeta(documentId);
+    meta.starred = !meta.starred;
+    await storage.saveDocMeta(documentId, meta);
+    res.json({ starred: !!meta.starred });
+  } catch (error) {
+    console.error("[Server] Star error:", error);
+    res.status(500).json({ error: "Failed to toggle star" });
+  }
+});
+
+// Set document tags endpoint
+app.post("/api/documents/:documentId/tags", async (req, res) => {
+  try {
+    const { documentId } = req.params;
+    const { tags } = req.body as { tags: string[] };
+    const meta = await storage.loadDocMeta(documentId);
+    meta.tags = Array.isArray(tags) ? tags : [];
+    await storage.saveDocMeta(documentId, meta);
+    res.json({ tags: meta.tags });
+  } catch (error) {
+    console.error("[Server] Tags error:", error);
+    res.status(500).json({ error: "Failed to update tags" });
+  }
+});
+
+// Search documents endpoint
+app.get("/api/documents/search", async (req, res) => {
+  try {
+    const q = ((req.query.q as string) || "").trim().toLowerCase();
+    if (!q) {
+      return res.json({ results: [] });
+    }
+
+    const all = await storage.listDocumentsWithMeta();
+    const results = all
+      .filter((item) => !item.meta.deletedAt)
+      .filter((item) => {
+        const name = (item.meta.name || item.id).toLowerCase();
+        return name.includes(q);
+      })
+      .map((item) => ({
+        id: item.id,
+        name: item.meta.name || item.id,
+        type: item.meta.type || typeFromId(item.id),
+        folderId: item.meta.folderId,
+        modifiedAt: item.modifiedAt,
+      }))
+      .sort(
+        (a, b) =>
+          new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime(),
+      );
+
+    res.json({ results });
+  } catch (error) {
+    console.error("[Server] Search error:", error);
+    res.status(500).json({ error: "Failed to search documents" });
+  }
+});
+
+// Full-text search across document content
+app.get("/api/search/content", async (req, res) => {
+  try {
+    const q = ((req.query.q as string) || "").trim().toLowerCase();
+    if (!q || q.length < 2) {
+      return res.json({ results: [] });
+    }
+
+    const all = await storage.listDocumentsWithMeta();
+    const active = all.filter((item) => !item.meta.deletedAt);
+    const results: Array<{
+      id: string;
+      name: string;
+      type: string;
+      snippet: string;
+      modifiedAt: string;
+    }> = [];
+
+    for (const item of active) {
+      if (results.length >= 20) break;
+      const name = (item.meta.name || item.id).toLowerCase();
+      if (name.includes(q)) {
+        results.push({
+          id: item.id,
+          name: item.meta.name || item.id,
+          type: item.meta.type || typeFromId(item.id),
+          snippet: `Name match: ${item.meta.name || item.id}`,
+          modifiedAt: item.modifiedAt,
+        });
+        continue;
+      }
+      try {
+        const doc = await storage.loadDocument(item.id);
+        if (!doc) continue;
+        const text = extractText(doc, item.meta.type || typeFromId(item.id));
+        const idx = text.toLowerCase().indexOf(q);
+        if (idx >= 0) {
+          const start = Math.max(0, idx - 40);
+          const end = Math.min(text.length, idx + q.length + 40);
+          const snippet =
+            (start > 0 ? "..." : "") +
+            text.slice(start, end) +
+            (end < text.length ? "..." : "");
+          results.push({
+            id: item.id,
+            name: item.meta.name || item.id,
+            type: item.meta.type || typeFromId(item.id),
+            snippet,
+            modifiedAt: item.modifiedAt,
+          });
+        }
+      } catch {
+        // skip unreadable docs
+      }
+    }
+
+    res.json({ results });
+  } catch (error) {
+    console.error("[Server] Content search error:", error);
+    res.status(500).json({ error: "Failed to search content" });
+  }
+});
+
+// Resolve document name to ID (for [[links]])
+app.get("/api/resolve", async (req, res) => {
+  try {
+    const name = ((req.query.name as string) || "").trim();
+    if (!name) return res.json({ document: null });
+
+    const all = await storage.listDocumentsWithMeta();
+    const nameLower = name.toLowerCase();
+
+    const exact = all.find(
+      (item) =>
+        !item.meta.deletedAt &&
+        (item.meta.name || item.id).toLowerCase() === nameLower,
+    );
+    if (exact) {
+      return res.json({
+        document: {
+          id: exact.id,
+          name: exact.meta.name || exact.id,
+          type: exact.meta.type || typeFromId(exact.id),
+        },
+      });
+    }
+
+    const partial = all.find(
+      (item) =>
+        !item.meta.deletedAt &&
+        (item.meta.name || item.id).toLowerCase().includes(nameLower),
+    );
+    if (partial) {
+      return res.json({
+        document: {
+          id: partial.id,
+          name: partial.meta.name || partial.id,
+          type: partial.meta.type || typeFromId(partial.id),
+        },
+      });
+    }
+
+    res.json({ document: null });
+  } catch (error) {
+    console.error("[Server] Resolve error:", error);
+    res.status(500).json({ error: "Failed to resolve document" });
+  }
+});
+
+// Get backlinks for a document (which docs link to this one)
+app.get("/api/backlinks/:documentId", async (req, res) => {
+  try {
+    const { documentId } = req.params;
+    const cacheKey = `backlinks:${documentId}`;
+    const cached = getCachedResponse(cacheKey);
+    if (cached) return res.json(cached);
+
+    const meta = await storage.loadDocMeta(documentId);
+    const docName = meta.name || documentId;
+    const nameLower = docName.toLowerCase();
+
+    const all = await storage.listDocumentsWithMeta();
+    const backlinks: Array<{ id: string; name: string; type: string }> = [];
+
+    for (const item of all) {
+      if (item.meta.deletedAt || item.id === documentId) continue;
+      try {
+        const doc = await storage.loadDocument(item.id);
+        if (!doc) continue;
+        const text = extractText(doc, item.meta.type || typeFromId(item.id));
+        const textLower = text.toLowerCase();
+        if (
+          textLower.includes(`[[${nameLower}]]`) ||
+          textLower.includes(`[[${documentId.toLowerCase()}]]`)
+        ) {
+          backlinks.push({
+            id: item.id,
+            name: item.meta.name || item.id,
+            type: item.meta.type || typeFromId(item.id),
+          });
+        }
+      } catch {
+        // skip unreadable docs
+      }
+    }
+
+    const result = { backlinks };
+    setCachedResponse(cacheKey, result);
+    res.json(result);
+  } catch (error) {
+    console.error("[Server] Backlinks error:", error);
+    res.status(500).json({ error: "Failed to get backlinks" });
+  }
+});
+
+// List all document names (for autocomplete)
+app.get("/api/documents/names", async (req, res) => {
+  try {
+    const all = await storage.listDocumentsWithMeta();
+    const names = all
+      .filter((item) => !item.meta.deletedAt)
+      .map((item) => ({
+        id: item.id,
+        name: item.meta.name || item.id,
+        type: item.meta.type || typeFromId(item.id),
+      }));
+    res.json({ documents: names });
+  } catch (error) {
+    console.error("[Server] Names error:", error);
+    res.status(500).json({ error: "Failed to list names" });
+  }
+});
+
+// Extract structured data from documents for flowchart generation
+app.post("/api/extract-structure", async (req, res) => {
+  try {
+    const { documentIds } = req.body as { documentIds: string[] };
+    if (!documentIds?.length)
+      return res.status(400).json({ error: "No document IDs provided" });
+
+    const results: Array<{
+      id: string;
+      name: string;
+      type: string;
+      nodes: Array<{ label: string; children?: string[] }>;
+    }> = [];
+
+    for (const docId of documentIds) {
+      try {
+        const meta = await storage.loadDocMeta(docId);
+        const doc = await storage.loadDocument(docId);
+        if (!doc) continue;
+        const type = meta.type || typeFromId(docId);
+        const name = meta.name || docId;
+        const nodes: Array<{ label: string; children?: string[] }> = [];
+
+        if (type === "markdown") {
+          const content = (doc as any)?.content || "";
+          const lines = content.split("\n");
+          let currentSection: { label: string; children: string[] } | null =
+            null;
+          for (const line of lines) {
+            const headingMatch = line.match(/^(#{1,3})\s+(.+)/);
+            if (headingMatch) {
+              if (currentSection) nodes.push(currentSection);
+              currentSection = { label: headingMatch[2].trim(), children: [] };
+            } else if (currentSection && line.trim().startsWith("- ")) {
+              currentSection.children.push(line.trim().slice(2));
+            }
+          }
+          if (currentSection) nodes.push(currentSection);
+          if (nodes.length === 0) {
+            nodes.push({ label: name });
+          }
+        } else if (type === "kanban") {
+          const columns = (doc as any)?.columns || [];
+          const cards = (doc as any)?.cards || {};
+          for (const col of columns) {
+            const cardLabels = (col.cardIds || []).map((cid: string) => {
+              const card = cards[cid];
+              return card?.title || cid;
+            });
+            nodes.push({ label: col.title || "Column", children: cardLabels });
+          }
+        } else if (type === "spreadsheet") {
+          nodes.push({ label: name, children: ["Spreadsheet data"] });
+        } else {
+          const text = extractText(doc, type);
+          const words = text.split(/\s+/).filter(Boolean).slice(0, 20);
+          nodes.push({
+            label: name,
+            children: words.length > 0 ? [words.join(" ")] : undefined,
+          });
+        }
+
+        results.push({ id: docId, name, type, nodes });
+      } catch {
+        // skip unreadable docs
+      }
+    }
+
+    res.json({ documents: results });
+  } catch (error) {
+    console.error("[Server] Extract structure error:", error);
+    res.status(500).json({ error: "Failed to extract structure" });
+  }
+});
+
+// Get the full link graph between documents
+app.get("/api/link-graph", async (_req, res) => {
+  try {
+    const cached = getCachedResponse("link-graph");
+    if (cached) return res.json(cached);
+
+    const all = await storage.listDocumentsWithMeta();
+    const active = all.filter((item) => !item.meta.deletedAt);
+    const nameToId = new Map<string, string>();
+    for (const item of active) {
+      const name = (item.meta.name || item.id).toLowerCase();
+      nameToId.set(name, item.id);
+    }
+
+    const LINK_RE = /\[\[([^\]]+)\]\]/g;
+    const nodes: Array<{ id: string; name: string; type: string }> = [];
+    const edges: Array<{ source: string; target: string }> = [];
+
+    for (const item of active) {
+      const type = item.meta.type || typeFromId(item.id);
+      nodes.push({ id: item.id, name: item.meta.name || item.id, type });
+
+      try {
+        const doc = await storage.loadDocument(item.id);
+        if (!doc) continue;
+        const text = extractText(doc, type);
+        let match: RegExpExecArray | null;
+        const seen = new Set<string>();
+        while ((match = LINK_RE.exec(text)) !== null) {
+          const linkName = match[1].toLowerCase();
+          const targetId = nameToId.get(linkName);
+          if (targetId && targetId !== item.id && !seen.has(targetId)) {
+            seen.add(targetId);
+            edges.push({ source: item.id, target: targetId });
+          }
+        }
+      } catch {
+        // skip unreadable docs
+      }
+    }
+
+    const result = { nodes, edges };
+    setCachedResponse("link-graph", result);
+    res.json(result);
+  } catch (error) {
+    console.error("[Server] Link graph error:", error);
+    res.status(500).json({ error: "Failed to build link graph" });
+  }
+});
+
+function extractText(doc: any, type: string): string {
+  if (type === "markdown") {
+    return doc?.content || "";
+  }
+  if (type === "kanban") {
+    const parts: string[] = [];
+    if (doc?.columns) {
+      for (const col of doc.columns) {
+        parts.push(col.title || "");
+      }
+    }
+    if (doc?.cards) {
+      for (const card of doc.cards) {
+        parts.push(card.title || "");
+        if (card.description) parts.push(card.description);
+      }
+    }
+    return parts.join(" ");
+  }
+  if (type === "excalidraw") {
+    const elements = doc?.elements || [];
+    return elements
+      .map((e: any) => e.text || "")
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (type === "drawio") {
+    return typeof doc === "string" ? doc : JSON.stringify(doc);
+  }
+  return "";
+}
+
+// Duplicate document endpoint
+app.post("/api/duplicate/:documentId", async (req, res) => {
+  try {
+    const { documentId } = req.params;
+    const snapshot = await storage.loadDocument(documentId);
+    if (!snapshot) {
+      return res.status(404).json({ error: "Document not found" });
+    }
+
+    const meta = await storage.loadDocMeta(documentId);
+    const docType = meta.type || typeFromId(documentId);
+    const newId = `${docType}-${Date.now()}`;
+    const newName = `${meta.name || documentId} (Copy)`;
+
+    await storage.saveDocument(newId, snapshot);
+    await storage.saveDocMeta(newId, {
+      folderId: meta.folderId,
+      name: newName,
+      type: docType,
+      createdAt: new Date().toISOString(),
+    });
+
+    console.log(`[Server] Duplicated document: ${documentId} -> ${newId}`);
+    res.json({ success: true, documentId: newId, name: newName });
+  } catch (error) {
+    console.error("[Server] Duplicate error:", error);
+    res.status(500).json({ error: "Failed to duplicate document" });
+  }
+});
+
+// Soft-delete document (move to trash)
 app.delete("/api/delete/:documentId", async (req, res) => {
   try {
     const { documentId } = req.params;
-    const docMeta = await storage.loadDocMeta(documentId);
-    const docType = docMeta.type || typeFromId(documentId);
+    const permanent = req.query.permanent === "true";
 
-    let deleted = false;
-    if (docType === "pdf") {
-      deleted = await storage.deleteFile(documentId, "pdf");
+    if (permanent) {
+      const docMeta = await storage.loadDocMeta(documentId);
+      const docType = docMeta.type || typeFromId(documentId);
+      let deleted = false;
+      if (docType === "pdf") {
+        deleted = await storage.deleteFile(documentId, "pdf");
+      } else {
+        deleted = await storage.deleteDocument(documentId);
+      }
+      if (deleted) {
+        await storage.deleteDocMeta(documentId);
+        invalidateResponseCache();
+        console.log(`[Server] Permanently deleted: ${documentId}`);
+        res.json({ success: true });
+      } else {
+        res.status(404).json({ error: "Document not found" });
+      }
     } else {
-      deleted = await storage.deleteDocument(documentId);
-    }
-
-    if (deleted) {
-      await storage.deleteDocMeta(documentId);
-      console.log(`[Server] Deleted document: ${documentId}`);
+      const meta = await storage.loadDocMeta(documentId);
+      meta.deletedAt = new Date().toISOString();
+      await storage.saveDocMeta(documentId, meta);
+      invalidateResponseCache();
+      console.log(`[Server] Moved to trash: ${documentId}`);
       res.json({ success: true });
-    } else {
-      res.status(404).json({ error: "Document not found" });
     }
   } catch (error) {
     console.error("[Server] Delete error:", error);
     res.status(500).json({ error: "Failed to delete document" });
+  }
+});
+
+// Restore document from trash
+app.post("/api/trash/:documentId/restore", async (req, res) => {
+  try {
+    const { documentId } = req.params;
+    const meta = await storage.loadDocMeta(documentId);
+    delete meta.deletedAt;
+    await storage.saveDocMeta(documentId, meta);
+    invalidateResponseCache();
+    console.log(`[Server] Restored from trash: ${documentId}`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[Server] Restore error:", error);
+    res.status(500).json({ error: "Failed to restore document" });
+  }
+});
+
+// List trash
+app.get("/api/trash", async (req, res) => {
+  try {
+    const all = await storage.listDocumentsWithMeta();
+    const trashed = all
+      .filter((item) => item.meta.deletedAt)
+      .map((item) => ({
+        id: item.id,
+        name: item.meta.name || item.id,
+        type: item.meta.type || typeFromId(item.id),
+        deletedAt: item.meta.deletedAt,
+        modifiedAt: item.modifiedAt,
+      }))
+      .sort(
+        (a, b) =>
+          new Date(b.deletedAt!).getTime() - new Date(a.deletedAt!).getTime(),
+      );
+    res.json({ documents: trashed });
+  } catch (error) {
+    console.error("[Server] Trash list error:", error);
+    res.status(500).json({ error: "Failed to list trash" });
+  }
+});
+
+// Empty trash (permanently delete all trashed docs)
+app.post("/api/trash/empty", async (req, res) => {
+  try {
+    const all = await storage.listDocumentsWithMeta();
+    const trashed = all.filter((item) => item.meta.deletedAt);
+    for (const item of trashed) {
+      const docType = item.meta.type || typeFromId(item.id);
+      if (docType === "pdf") {
+        await storage.deleteFile(item.id, "pdf");
+      } else {
+        await storage.deleteDocument(item.id);
+      }
+      await storage.deleteDocMeta(item.id);
+    }
+    console.log(`[Server] Emptied trash: ${trashed.length} docs`);
+    res.json({ success: true, count: trashed.length });
+  } catch (error) {
+    console.error("[Server] Empty trash error:", error);
+    res.status(500).json({ error: "Failed to empty trash" });
   }
 });
 
@@ -504,6 +1080,7 @@ app.post("/api/rename/:documentId", async (req, res) => {
     meta.name = newName.trim();
     await storage.saveDocMeta(newDocumentId, meta);
 
+    invalidateResponseCache();
     console.log(`[Server] Renamed document: ${documentId} -> ${newDocumentId}`);
     res.json({ success: true, newDocumentId });
   } catch (error) {
@@ -541,17 +1118,13 @@ app.post("/api/bulk/delete", async (req, res) => {
     if (!Array.isArray(documentIds)) {
       return res.status(400).json({ error: "documentIds array is required" });
     }
+    const now = new Date().toISOString();
     for (const docId of documentIds) {
-      const docMeta = await storage.loadDocMeta(docId);
-      const docType = docMeta.type || typeFromId(docId);
-      if (docType === "pdf") {
-        await storage.deleteFile(docId, "pdf");
-      } else {
-        await storage.deleteDocument(docId);
-      }
-      await storage.deleteDocMeta(docId);
+      const meta = await storage.loadDocMeta(docId);
+      meta.deletedAt = now;
+      await storage.saveDocMeta(docId, meta);
     }
-    console.log(`[Server] Bulk deleted ${documentIds.length} docs`);
+    console.log(`[Server] Bulk trashed ${documentIds.length} docs`);
     res.json({ success: true });
   } catch (error) {
     console.error("[Server] Bulk delete error:", error);
@@ -572,24 +1145,73 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
     }
 
     const ext = path.extname(file.originalname).toLowerCase();
+    const folderId = (req.body.folderId as string) || null;
+    const originalName = file.originalname.replace(/\.[^.]+$/, "");
+
+    if (ext === ".md") {
+      const content = file.buffer.toString("utf-8");
+      const docId = `markdown-${Date.now()}`;
+      await storage.saveDocument(docId, { content });
+      await storage.saveDocMeta(docId, {
+        folderId,
+        name: originalName,
+        type: "markdown",
+        createdAt: new Date().toISOString(),
+      });
+      console.log(`[Server] Imported markdown: ${docId} (${originalName})`);
+      return res.json({ success: true, documentId: docId, name: originalName });
+    }
+
+    if (ext === ".csv") {
+      const text = file.buffer.toString("utf-8");
+      const rows = text.split("\n").map((line) => line.split(","));
+      const cellData: Record<number, Record<number, { v: string }>> = {};
+      rows.forEach((row, ri) => {
+        cellData[ri] = {};
+        row.forEach((cell, ci) => {
+          const val = cell.trim().replace(/^"|"$/g, "");
+          if (val) cellData[ri][ci] = { v: val };
+        });
+      });
+      const snapshot = {
+        sheets: {
+          sheet1: {
+            id: "sheet1",
+            name: "Sheet1",
+            cellData,
+            rowCount: Math.max(rows.length, 20),
+            columnCount: Math.max(...rows.map((r) => r.length), 10),
+          },
+        },
+      };
+      const docId = `spreadsheet-${Date.now()}`;
+      await storage.saveDocument(docId, snapshot);
+      await storage.saveDocMeta(docId, {
+        folderId,
+        name: originalName,
+        type: "spreadsheet",
+        createdAt: new Date().toISOString(),
+      });
+      console.log(`[Server] Imported CSV: ${docId} (${originalName})`);
+      return res.json({ success: true, documentId: docId, name: originalName });
+    }
+
     if (ext !== ".pdf") {
-      return res.status(400).json({ error: "Only PDF files are allowed" });
+      return res
+        .status(400)
+        .json({ error: "Supported formats: .pdf, .md, .csv" });
     }
     if (!file.buffer.subarray(0, 4).equals(PDF_MAGIC)) {
       return res.status(400).json({ error: "File is not a valid PDF" });
     }
 
-    const folderId = (req.body.folderId as string) || null;
-    const originalName = file.originalname.replace(/\.[^.]+$/, "");
     const docId = `pdf-${Date.now()}`;
-    const extension = "pdf";
-
-    await storage.saveFile(docId, file.buffer, extension);
-
+    await storage.saveFile(docId, file.buffer, "pdf");
     await storage.saveDocMeta(docId, {
       folderId,
       name: originalName,
       type: "pdf",
+      createdAt: new Date().toISOString(),
     });
 
     console.log(`[Server] Uploaded file: ${docId} (${originalName})`);
@@ -597,6 +1219,240 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
   } catch (error) {
     console.error("[Server] Upload error:", error);
     res.status(500).json({ error: "Failed to upload file" });
+  }
+});
+
+// Import Obsidian vault from zip
+app.post("/api/import/obsidian", upload.single("file"), async (req, res) => {
+  try {
+    const file = req.file;
+    if (!file) {
+      return res.status(400).json({ error: "No file provided" });
+    }
+
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext !== ".zip") {
+      return res.status(400).json({ error: "Please upload a .zip file" });
+    }
+
+    const targetFolderId = (req.body.folderId as string) || null;
+    const zip = new AdmZip(file.buffer);
+    const entries = zip.getEntries();
+
+    // Build folder structure from zip paths
+    const folderMap = new Map<string, string>(); // zip path -> folder id
+    const existingFolders = await loadFolders();
+    const newFolders: Folder[] = [];
+
+    // Create a root folder for the vault
+    const vaultName =
+      file.originalname.replace(/\.zip$/i, "") || "Obsidian Vault";
+    const vaultFolderId = `folder-${Date.now()}`;
+    newFolders.push({
+      id: vaultFolderId,
+      name: vaultName,
+      parentId: targetFolderId,
+      createdAt: new Date().toISOString(),
+    });
+    folderMap.set("", vaultFolderId);
+
+    // Collect all unique directory paths
+    const dirPaths = new Set<string>();
+    for (const entry of entries) {
+      if (entry.isDirectory) continue;
+      const name = entry.entryName;
+      // Strip leading vault folder if all entries share one
+      const parts = name.split("/");
+      if (parts.length > 1) {
+        for (let i = 1; i < parts.length; i++) {
+          dirPaths.add(parts.slice(0, i).join("/"));
+        }
+      }
+    }
+
+    // Detect common root prefix (Obsidian exports often wrap in a folder)
+    let commonPrefix = "";
+    const allPaths = entries
+      .filter((e) => !e.isDirectory)
+      .map((e) => e.entryName);
+    if (allPaths.length > 0) {
+      const firstParts = allPaths[0].split("/");
+      if (
+        firstParts.length > 1 &&
+        allPaths.every((p) => p.startsWith(firstParts[0] + "/"))
+      ) {
+        commonPrefix = firstParts[0] + "/";
+      }
+    }
+
+    // Create folders
+    const sortedDirs = [...dirPaths].sort();
+    for (const dirPath of sortedDirs) {
+      let relative = dirPath;
+      if (commonPrefix && relative.startsWith(commonPrefix)) {
+        relative = relative.slice(commonPrefix.length);
+      }
+      if (!relative || folderMap.has(relative)) continue;
+
+      const parts = relative.split("/");
+      const folderName = parts[parts.length - 1];
+      const parentPath = parts.slice(0, -1).join("/");
+      const parentId = folderMap.get(parentPath) || vaultFolderId;
+
+      const folderId = `folder-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      newFolders.push({
+        id: folderId,
+        name: folderName,
+        parentId,
+        createdAt: new Date().toISOString(),
+      });
+      folderMap.set(relative, folderId);
+    }
+
+    await saveFolders([...existingFolders, ...newFolders]);
+
+    // Import files
+    let imported = 0;
+    let skipped = 0;
+    const importedDocs: Array<{ id: string; name: string; type: string }> = [];
+
+    for (const entry of entries) {
+      if (entry.isDirectory) continue;
+      let entryName = entry.entryName;
+      if (commonPrefix && entryName.startsWith(commonPrefix)) {
+        entryName = entryName.slice(commonPrefix.length);
+      }
+
+      const entryExt = path.extname(entryName).toLowerCase();
+      const baseName = path.basename(entryName, entryExt);
+      const dirPart = path.dirname(entryName);
+      const folderId =
+        dirPart === "."
+          ? vaultFolderId
+          : folderMap.get(dirPart) || vaultFolderId;
+
+      // Skip Obsidian config files
+      if (
+        entryName.startsWith(".obsidian/") ||
+        entryName.startsWith(".obsidian\\") ||
+        entryName.startsWith(".trash/")
+      ) {
+        skipped++;
+        continue;
+      }
+
+      const buf = entry.getData();
+
+      if (entryExt === ".md") {
+        let content = buf.toString("utf-8");
+        // Convert Obsidian wikilinks [[target]] are already in our format
+        // Convert ![[embed]] image embeds to markdown image syntax
+        content = content.replace(
+          /!\[\[([^\]|]+?)(?:\|([^\]]*))?\]\]/g,
+          (_, target, alt) => `![${alt || target}](${target})`,
+        );
+        const docId = `markdown-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        await storage.saveDocument(docId, { content });
+        await storage.saveDocMeta(docId, {
+          folderId,
+          name: baseName,
+          type: "markdown",
+          createdAt: new Date().toISOString(),
+        });
+        importedDocs.push({ id: docId, name: baseName, type: "markdown" });
+        imported++;
+      } else if (entryExt === ".pdf") {
+        const docId = `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        await storage.saveFile(docId, buf, "pdf");
+        await storage.saveDocMeta(docId, {
+          folderId,
+          name: baseName,
+          type: "pdf",
+          createdAt: new Date().toISOString(),
+        });
+        importedDocs.push({ id: docId, name: baseName, type: "pdf" });
+        imported++;
+      } else if (entryExt === ".csv") {
+        const text = buf.toString("utf-8");
+        const rows = text.split("\n").map((line: string) => line.split(","));
+        const cellData: Record<number, Record<number, { v: string }>> = {};
+        rows.forEach((row: string[], ri: number) => {
+          cellData[ri] = {};
+          row.forEach((cell: string, ci: number) => {
+            const val = cell.trim().replace(/^"|"$/g, "");
+            if (val) cellData[ri][ci] = { v: val };
+          });
+        });
+        const snapshot = {
+          sheets: {
+            sheet1: {
+              id: "sheet1",
+              name: "Sheet1",
+              cellData,
+              rowCount: Math.max(rows.length, 20),
+              columnCount: Math.max(...rows.map((r: string[]) => r.length), 10),
+            },
+          },
+        };
+        const docId = `spreadsheet-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        await storage.saveDocument(docId, snapshot);
+        await storage.saveDocMeta(docId, {
+          folderId,
+          name: baseName,
+          type: "spreadsheet",
+          createdAt: new Date().toISOString(),
+        });
+        importedDocs.push({
+          id: docId,
+          name: baseName,
+          type: "spreadsheet",
+        });
+        imported++;
+      } else if (
+        [".json", ".canvas"].includes(entryExt) &&
+        !entryName.includes(".obsidian")
+      ) {
+        // Obsidian canvas files or JSON data
+        try {
+          const text = buf.toString("utf-8");
+          const content = `# ${baseName}\n\n\`\`\`json\n${text}\n\`\`\`\n`;
+          const docId = `markdown-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          await storage.saveDocument(docId, { content });
+          await storage.saveDocMeta(docId, {
+            folderId,
+            name: baseName,
+            type: "markdown",
+            createdAt: new Date().toISOString(),
+          });
+          importedDocs.push({
+            id: docId,
+            name: baseName,
+            type: "markdown",
+          });
+          imported++;
+        } catch {
+          skipped++;
+        }
+      } else {
+        skipped++;
+      }
+    }
+
+    invalidateResponseCache();
+    console.log(
+      `[Server] Obsidian import: ${imported} imported, ${skipped} skipped, ${newFolders.length} folders`,
+    );
+    res.json({
+      success: true,
+      imported,
+      skipped,
+      folders: newFolders.length,
+      documents: importedDocs,
+      vaultFolderId,
+    });
+  } catch (error) {
+    console.error("[Server] Obsidian import error:", error);
+    res.status(500).json({ error: "Failed to import Obsidian vault" });
   }
 });
 
@@ -632,6 +1488,315 @@ app.get("/api/meta/:documentId", async (req, res) => {
   } catch (error) {
     console.error("[Server] Meta error:", error);
     res.status(500).json({ error: "Failed to get metadata" });
+  }
+});
+
+// ============ TEMPLATE ENDPOINTS ============
+
+app.get("/api/templates", async (_req, res) => {
+  try {
+    const templates = await storage.loadTemplates();
+    res.json({ templates });
+  } catch (error) {
+    console.error("[Server] Templates list error:", error);
+    res.status(500).json({ error: "Failed to load templates" });
+  }
+});
+
+app.post("/api/templates", async (req, res) => {
+  try {
+    const { name, type, snapshot } = req.body;
+    if (!name || !type || !snapshot) {
+      return res
+        .status(400)
+        .json({ error: "name, type, and snapshot are required" });
+    }
+    const template: Template = {
+      id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: name.trim(),
+      type: type as DocumentType,
+      snapshot,
+      createdAt: new Date().toISOString(),
+    };
+    const templates = await storage.loadTemplates();
+    templates.push(template);
+    await storage.saveTemplates(templates);
+    console.log(`[Server] Created template: ${template.name}`);
+    res.json({ template });
+  } catch (error) {
+    console.error("[Server] Template create error:", error);
+    res.status(500).json({ error: "Failed to create template" });
+  }
+});
+
+app.post("/api/templates/:templateId/use", async (req, res) => {
+  try {
+    const { templateId } = req.params;
+    const { folderId } = req.body;
+    const templates = await storage.loadTemplates();
+    const tpl = templates.find((t) => t.id === templateId);
+    if (!tpl) return res.status(404).json({ error: "Template not found" });
+
+    const docId = `${tpl.type}-${Date.now()}`;
+    await storage.saveDocument(docId, tpl.snapshot);
+    await storage.saveDocMeta(docId, {
+      folderId: folderId || null,
+      name: tpl.name,
+      type: tpl.type,
+      createdAt: new Date().toISOString(),
+    });
+    invalidateResponseCache();
+    console.log(`[Server] Created doc from template: ${tpl.name} -> ${docId}`);
+    res.json({ documentId: docId, type: tpl.type });
+  } catch (error) {
+    console.error("[Server] Template use error:", error);
+    res.status(500).json({ error: "Failed to create from template" });
+  }
+});
+
+app.delete("/api/templates/:templateId", async (req, res) => {
+  try {
+    const { templateId } = req.params;
+    const templates = await storage.loadTemplates();
+    const filtered = templates.filter((t) => t.id !== templateId);
+    if (filtered.length === templates.length) {
+      return res.status(404).json({ error: "Template not found" });
+    }
+    await storage.saveTemplates(filtered);
+    console.log(`[Server] Deleted template: ${templateId}`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[Server] Template delete error:", error);
+    res.status(500).json({ error: "Failed to delete template" });
+  }
+});
+
+app.post("/api/templates/from-doc/:documentId", async (req, res) => {
+  try {
+    const { documentId } = req.params;
+    const { name } = req.body;
+
+    const meta = await storage.loadDocMeta(documentId);
+    const docType = meta.type || typeFromId(documentId);
+    let snapshot: unknown;
+    if (docType === "pdf") {
+      return res
+        .status(400)
+        .json({ error: "PDF documents cannot be saved as templates" });
+    }
+    snapshot = await storage.loadDocument(documentId);
+    if (!snapshot) {
+      return res.status(404).json({ error: "Document not found" });
+    }
+
+    const templateName = (name || meta.name || documentId).trim();
+    const template: Template = {
+      id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: templateName,
+      type: docType,
+      snapshot,
+      createdAt: new Date().toISOString(),
+    };
+    const templates = await storage.loadTemplates();
+    templates.push(template);
+    await storage.saveTemplates(templates);
+    console.log(
+      `[Server] Saved doc as template: ${documentId} -> ${template.name}`,
+    );
+    res.json({ template });
+  } catch (error) {
+    console.error("[Server] Save as template error:", error);
+    res.status(500).json({ error: "Failed to save as template" });
+  }
+});
+
+// ============ DAILY NOTES ============
+
+const DAILY_NOTE_PREFIX = "daily-";
+const DAILY_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function dailyNoteId(date: string) {
+  return `${DAILY_NOTE_PREFIX}${date}`;
+}
+
+function dailyNoteTemplate(date: string) {
+  const d = new Date(date + "T00:00:00");
+  const formatted = d.toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  return `# ${formatted}\n\n## Tasks\n\n- [ ] \n\n## Notes\n\n\n`;
+}
+
+app.get("/api/daily-note/:date", async (req, res) => {
+  try {
+    const { date } = req.params;
+    if (!DAILY_DATE_RE.test(date)) {
+      return res
+        .status(400)
+        .json({ error: "Invalid date format, use YYYY-MM-DD" });
+    }
+
+    const docId = dailyNoteId(date);
+    const exists = await storage.existsDocument(docId);
+
+    if (!exists) {
+      const content = dailyNoteTemplate(date);
+      await storage.saveDocument(docId, { content });
+      await storage.saveDocMeta(docId, {
+        folderId: null,
+        name: date,
+        type: "markdown",
+        createdAt: new Date().toISOString(),
+        tags: ["daily-note"],
+      });
+      invalidateResponseCache();
+      console.log(`[Server] Created daily note: ${date}`);
+    }
+
+    res.json({ documentId: docId, date, created: !exists });
+  } catch (error) {
+    console.error("[Server] Daily note error:", error);
+    res.status(500).json({ error: "Failed to get daily note" });
+  }
+});
+
+app.get("/api/daily-notes", async (_req, res) => {
+  try {
+    const all = await storage.listDocumentsWithMeta();
+    const notes = all
+      .filter(
+        (item) => !item.meta.deletedAt && item.id.startsWith(DAILY_NOTE_PREFIX),
+      )
+      .map((item) => ({
+        id: item.id,
+        date: item.id.replace(DAILY_NOTE_PREFIX, ""),
+        name: item.meta.name || item.id,
+        modifiedAt: item.modifiedAt,
+      }))
+      .sort((a, b) => b.date.localeCompare(a.date));
+    res.json({ notes });
+  } catch (error) {
+    console.error("[Server] Daily notes list error:", error);
+    res.status(500).json({ error: "Failed to list daily notes" });
+  }
+});
+
+// ============ FLEETING NOTES ============
+
+app.get("/api/fleeting", async (_req, res) => {
+  try {
+    const notes = await storage.loadFleetingNotes();
+    res.json({ notes });
+  } catch (error) {
+    console.error("[Server] Fleeting notes list error:", error);
+    res.status(500).json({ error: "Failed to load fleeting notes" });
+  }
+});
+
+app.post("/api/fleeting", async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text?.trim()) {
+      return res.status(400).json({ error: "Text is required" });
+    }
+    const note: FleetingNote = {
+      id: `fn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      text: text.trim(),
+      done: false,
+      createdAt: new Date().toISOString(),
+    };
+    const notes = await storage.loadFleetingNotes();
+    notes.unshift(note);
+    await storage.saveFleetingNotes(notes);
+    res.json({ note });
+  } catch (error) {
+    console.error("[Server] Fleeting note create error:", error);
+    res.status(500).json({ error: "Failed to create fleeting note" });
+  }
+});
+
+app.patch("/api/fleeting/:noteId", async (req, res) => {
+  try {
+    const { noteId } = req.params;
+    const { text, done } = req.body;
+    const notes = await storage.loadFleetingNotes();
+    const note = notes.find((n) => n.id === noteId);
+    if (!note) return res.status(404).json({ error: "Note not found" });
+    if (text !== undefined) note.text = text;
+    if (done !== undefined) note.done = done;
+    await storage.saveFleetingNotes(notes);
+    res.json({ note });
+  } catch (error) {
+    console.error("[Server] Fleeting note update error:", error);
+    res.status(500).json({ error: "Failed to update fleeting note" });
+  }
+});
+
+app.delete("/api/fleeting/:noteId", async (req, res) => {
+  try {
+    const { noteId } = req.params;
+    const notes = await storage.loadFleetingNotes();
+    const filtered = notes.filter((n) => n.id !== noteId);
+    if (filtered.length === notes.length) {
+      return res.status(404).json({ error: "Note not found" });
+    }
+    await storage.saveFleetingNotes(filtered);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[Server] Fleeting note delete error:", error);
+    res.status(500).json({ error: "Failed to delete fleeting note" });
+  }
+});
+
+app.post("/api/fleeting/:noteId/open-as", async (req, res) => {
+  try {
+    const { noteId } = req.params;
+    const { type } = req.body;
+    const docType = (type || "markdown") as DocumentType;
+    const notes = await storage.loadFleetingNotes();
+    const note = notes.find((n) => n.id === noteId);
+    if (!note) return res.status(404).json({ error: "Note not found" });
+
+    const prefix = docType === "tldraw" ? "drawing" : docType;
+    const docId = `${prefix}-${Date.now()}`;
+    const name = note.text.slice(0, 60);
+
+    let snapshot: unknown;
+    if (docType === "markdown") {
+      snapshot = { content: `# ${name}\n\n${note.text}\n` };
+    } else if (docType === "kanban") {
+      snapshot = {
+        columns: [
+          { id: "col-todo", title: "To Do", cardIds: ["c1"] },
+          { id: "col-progress", title: "In Progress", cardIds: [] },
+          { id: "col-done", title: "Done", cardIds: [] },
+        ],
+        cards: [{ id: "c1", title: note.text, description: "" }],
+      };
+    } else {
+      snapshot = {};
+    }
+
+    await storage.saveDocument(docId, snapshot);
+    await storage.saveDocMeta(docId, {
+      folderId: null,
+      name,
+      type: docType,
+      createdAt: new Date().toISOString(),
+    });
+
+    note.done = true;
+    note.documentId = docId;
+    await storage.saveFleetingNotes(notes);
+    invalidateResponseCache();
+
+    res.json({ documentId: docId, type: docType });
+  } catch (error) {
+    console.error("[Server] Fleeting open-as error:", error);
+    res.status(500).json({ error: "Failed to open as document" });
   }
 });
 

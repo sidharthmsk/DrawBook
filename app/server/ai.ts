@@ -256,6 +256,43 @@ If the user is NOT asking you to draw something, just respond with helpful text 
       );
     }
 
+    if (editorType === "kanban") {
+      return (
+        base +
+        `When the user asks you to add cards or organize the board, respond with BOTH:
+1. A brief text explanation of what you added.
+2. A JSON array of card objects wrapped in <kanban-cards> tags.
+
+Each card object must have: title (string). Optional: description (string), column (string matching a column title).
+If column is not specified, cards will be added to the first column.
+
+Example:
+<kanban-cards>
+[{"title":"Design mockups","description":"Create wireframes for the new feature","column":"To Do"},{"title":"Write tests","column":"In Progress"}]
+</kanban-cards>
+
+If the user is NOT asking you to add cards, just respond with helpful text — no card tags needed.`
+      );
+    }
+
+    if (editorType === "spreadsheet") {
+      return (
+        base +
+        `When the user asks you to fill cells, add data, or create formulas, respond with BOTH:
+1. A brief text explanation of what you added.
+2. A JSON array of cell objects wrapped in <spreadsheet-cells> tags.
+
+Each cell object must have: row (number, 0-indexed), col (number, 0-indexed), value (string or number).
+
+Example:
+<spreadsheet-cells>
+[{"row":0,"col":0,"value":"Name"},{"row":0,"col":1,"value":"Score"},{"row":1,"col":0,"value":"Alice"},{"row":1,"col":1,"value":95}]
+</spreadsheet-cells>
+
+If the user is NOT asking you to modify cells, just respond with helpful text — no cell tags needed.`
+      );
+    }
+
     return base + "Respond helpfully to the user's questions about their work.";
   }
 
@@ -309,6 +346,36 @@ If the user is NOT asking you to draw something, just respond with helpful text 
       }
     }
 
+    if (editorType === "kanban") {
+      const match = text.match(/<kanban-cards>([\s\S]*?)<\/kanban-cards>/);
+      if (match) {
+        const message = text
+          .replace(/<kanban-cards>[\s\S]*?<\/kanban-cards>/, "")
+          .trim();
+        return {
+          message: message || "Here are the cards I created.",
+          content: match[1].trim(),
+          contentType: "kanban-json",
+        };
+      }
+    }
+
+    if (editorType === "spreadsheet") {
+      const match = text.match(
+        /<spreadsheet-cells>([\s\S]*?)<\/spreadsheet-cells>/,
+      );
+      if (match) {
+        const message = text
+          .replace(/<spreadsheet-cells>[\s\S]*?<\/spreadsheet-cells>/, "")
+          .trim();
+        return {
+          message: message || "Here are the cell updates.",
+          content: match[1].trim(),
+          contentType: "spreadsheet-json",
+        };
+      }
+    }
+
     return { message: text };
   }
 
@@ -355,6 +422,67 @@ If the user is NOT asking you to draw something, just respond with helpful text 
     return content;
   }
 
+  async function callGroqStream(
+    messages: Array<{ role: string; content: string }>,
+    onChunk: (text: string) => void,
+  ): Promise<string> {
+    const apiKey = getGroqKey();
+    if (!apiKey)
+      throw new Error("GROQ_API_KEY is not configured on the server.");
+
+    const response = await fetch(GROQ_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        max_tokens: 4096,
+        temperature: 0.7,
+        messages,
+        stream: true,
+      }),
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text();
+      console.error("[AI] Groq stream error:", response.status, errBody);
+      throw new Error(`Groq returned ${response.status}`);
+    }
+
+    let full = "";
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("No response body");
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data: ")) continue;
+        const data = trimmed.slice(6);
+        if (data === "[DONE]") continue;
+        try {
+          const parsed = JSON.parse(data) as {
+            choices?: Array<{ delta?: { content?: string } }>;
+          };
+          const chunk = parsed.choices?.[0]?.delta?.content;
+          if (chunk) {
+            full += chunk;
+            onChunk(chunk);
+          }
+        } catch {}
+      }
+    }
+    return full;
+  }
+
   router.post("/chat", async (req, res) => {
     try {
       const { messages, canvasContext, editorType } = req.body as {
@@ -376,6 +504,28 @@ If the user is NOT asking you to draw something, just respond with helpful text 
         { role: "system", content: systemPrompt },
         ...messages.map((m) => ({ role: m.role, content: m.content })),
       ];
+
+      const wantStream = req.headers.accept === "text/event-stream";
+
+      if (wantStream) {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders();
+
+        try {
+          const fullText = await callGroqStream(aiMessages, (chunk) => {
+            res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+          });
+          const parsed = parseAiResponse(fullText, editorType || "tldraw");
+          res.write(`data: ${JSON.stringify({ done: true, ...parsed })}\n\n`);
+          res.end();
+        } catch (err: any) {
+          res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+          res.end();
+        }
+        return;
+      }
 
       const rawResponse = await callGroq(aiMessages);
       const parsed = parseAiResponse(rawResponse, editorType || "tldraw");
@@ -401,14 +551,26 @@ If the user is NOT asking you to draw something, just respond with helpful text 
         return res.status(400).json({ error: "shapes data is required." });
       }
 
+      const editorLabel = editorType || "drawing";
       const content = await callGroq([
         {
           role: "system",
-          content: `You are a helpful assistant that describes the contents of a ${editorType || "drawing"} editor. Provide a clear, concise description of what you see.`,
+          content: `You are an expert assistant analyzing the contents of a ${editorLabel} editor in a knowledge base app called Drawbook. Provide a structured description in markdown format with these sections:
+
+## Overview
+A 1-2 sentence summary of what the content is about.
+
+## Key Elements
+A bullet list of the main elements, shapes, sections, or data points.
+
+## Structure
+Describe how the content is organized (layout, hierarchy, flow).
+
+Be specific to the ${editorLabel} editor type. Keep it concise but thorough.`,
         },
         {
           role: "user",
-          content: `Describe what's in this editor:\n${shapes}`,
+          content: `Describe what's in this ${editorLabel} editor:\n${shapes}`,
         },
       ]);
 
@@ -435,14 +597,26 @@ If the user is NOT asking you to draw something, just respond with helpful text 
           .json({ error: "canvasContext data is required." });
       }
 
+      const editorLabel = editorType || "drawing";
       const content = await callGroq([
         {
           role: "system",
-          content: `You are a helpful design and content assistant. Suggest improvements for the user's ${editorType || "drawing"} editor content. Be specific and actionable.`,
+          content: `You are an expert ${editorLabel} content advisor for a knowledge base app called Drawbook. Provide numbered, actionable suggestions in markdown format. Each suggestion should have:
+
+1. **Title** - A short name for the improvement
+   Explanation of what to change and why it helps.
+
+Focus on:
+- Content quality and completeness
+- Organization and structure
+- Visual clarity (for drawing editors)
+- Best practices for the ${editorLabel} format
+
+Provide 3-5 specific suggestions. Be concrete, not vague.`,
         },
         {
           role: "user",
-          content: `Here's what's currently in my editor:\n${canvasContext}\n\nSuggest improvements.`,
+          content: `Here's what's currently in my ${editorLabel} editor:\n${canvasContext}\n\nSuggest improvements.`,
         },
       ]);
 
@@ -454,6 +628,19 @@ If the user is NOT asking you to draw something, just respond with helpful text 
         .status(500)
         .json({ error: err.message || "AI suggest request failed" });
     }
+  });
+
+  router.post("/feedback", (req, res) => {
+    const { documentId, messageIndex, rating, content } = req.body as {
+      documentId?: string;
+      messageIndex?: number;
+      rating?: string;
+      content?: string;
+    };
+    console.log(
+      `[AI Feedback] doc=${documentId} idx=${messageIndex} rating=${rating} content=${(content || "").slice(0, 100)}`,
+    );
+    res.json({ ok: true });
   });
 
   return router;

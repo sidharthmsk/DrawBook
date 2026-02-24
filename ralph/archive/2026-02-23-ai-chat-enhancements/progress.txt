@@ -1,0 +1,16 @@
+# Drawbook - AI Chat Enhancements
+# Branch: ralph/ai-chat-enhancements
+# Started: 2026-02-23
+
+## US-001: Markdown rendering for AI messages ✅
+## US-002: Streaming responses (SSE) ✅
+## US-003: Persist chat history in localStorage ✅
+## US-004: Clear conversation button ✅
+## US-005: Keyboard shortcuts & focus ✅
+## US-006: Message timestamps & grouping ✅
+## US-007: Quick prompts palette ✅
+## US-008: Response rating (thumbs up/down) ✅
+## US-009: Improved describe & suggest prompts ✅
+## US-010: Wire MakeReal into TldrawEditor ✅
+## US-011: Resizable AI panel width ✅
+## US-012: AI context indicator ✅

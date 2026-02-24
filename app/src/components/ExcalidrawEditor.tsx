@@ -2,12 +2,135 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { EditorShell } from "./EditorShell";
 import { createExcalidrawAdapter } from "./ai/EditorAdapter";
 import type { EditorAdapter } from "./ai/EditorAdapter";
+import { generateFlowchart } from "./FlowchartGenerator";
+import { useIsMobile } from "../hooks/useIsMobile";
+
+function makeElement(overrides: Record<string, any>) {
+  return {
+    id: `lib-${Math.random().toString(36).slice(2, 10)}`,
+    type: "rectangle",
+    x: 0,
+    y: 0,
+    width: 120,
+    height: 60,
+    angle: 0,
+    strokeColor: "#1e1e1e",
+    backgroundColor: "transparent",
+    fillStyle: "solid",
+    strokeWidth: 2,
+    roughness: 1,
+    opacity: 100,
+    groupIds: [],
+    roundness: { type: 3 },
+    boundElements: null,
+    updated: Date.now(),
+    link: null,
+    locked: false,
+    ...overrides,
+  };
+}
+
+const LIBRARY_PRESETS = [
+  {
+    id: "lib-flowchart-start",
+    status: "published" as const,
+    name: "Start / End",
+    elements: [
+      makeElement({
+        type: "ellipse",
+        width: 140,
+        height: 60,
+        backgroundColor: "#a5d8ff",
+      }),
+    ],
+  },
+  {
+    id: "lib-flowchart-process",
+    status: "published" as const,
+    name: "Process",
+    elements: [
+      makeElement({
+        width: 140,
+        height: 60,
+        backgroundColor: "#b2f2bb",
+      }),
+    ],
+  },
+  {
+    id: "lib-flowchart-decision",
+    status: "published" as const,
+    name: "Decision",
+    elements: [
+      makeElement({
+        type: "diamond",
+        width: 100,
+        height: 100,
+        backgroundColor: "#ffec99",
+      }),
+    ],
+  },
+  {
+    id: "lib-ux-button",
+    status: "published" as const,
+    name: "Button",
+    elements: [
+      makeElement({
+        width: 120,
+        height: 40,
+        backgroundColor: "#4c6ef5",
+        strokeColor: "#4c6ef5",
+        roundness: { type: 3 },
+      }),
+    ],
+  },
+  {
+    id: "lib-ux-input",
+    status: "published" as const,
+    name: "Input Field",
+    elements: [
+      makeElement({
+        width: 200,
+        height: 36,
+        backgroundColor: "#f8f9fa",
+        strokeColor: "#ced4da",
+      }),
+    ],
+  },
+  {
+    id: "lib-ux-card",
+    status: "published" as const,
+    name: "Card",
+    elements: [
+      makeElement({
+        width: 240,
+        height: 160,
+        backgroundColor: "#f8f9fa",
+        strokeColor: "#dee2e6",
+        roundness: { type: 3 },
+      }),
+    ],
+  },
+  {
+    id: "lib-ux-header",
+    status: "published" as const,
+    name: "Header Bar",
+    elements: [
+      makeElement({
+        width: 400,
+        height: 48,
+        backgroundColor: "#343a40",
+        strokeColor: "#343a40",
+      }),
+    ],
+  },
+];
 
 interface ExcalidrawEditorProps {
   documentId: string;
 }
 
 export function ExcalidrawEditor({ documentId }: ExcalidrawEditorProps) {
+  const isMobile = useIsMobile();
   const [ExcalidrawComp, setExcalidrawComp] = useState<any>(null);
   const [initialData, setInitialData] = useState<any>(undefined);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error">(
@@ -18,6 +141,7 @@ export function ExcalidrawEditor({ documentId }: ExcalidrawEditorProps) {
   const initialSaveDone = useRef(false);
   const excalidrawApiRef = useRef<any>(null);
   const [adapter, setAdapter] = useState<EditorAdapter | null>(null);
+  const [docName, setDocName] = useState("drawing");
 
   useEffect(() => {
     import("@excalidraw/excalidraw").then((mod) => {
@@ -28,6 +152,13 @@ export function ExcalidrawEditor({ documentId }: ExcalidrawEditorProps) {
   }, []);
 
   useEffect(() => {
+    fetch(`/api/meta/${documentId}`)
+      .then((r) => r.json())
+      .then((meta) => {
+        if (meta.name) setDocName(meta.name);
+      })
+      .catch(() => {});
+
     fetch(`/api/load/${documentId}`)
       .then((r) => r.json())
       .then((data) => {
@@ -87,6 +218,83 @@ export function ExcalidrawEditor({ documentId }: ExcalidrawEditorProps) {
     );
   }, []);
 
+  const [flowchartOpen, setFlowchartOpen] = useState(false);
+  const [allDocs, setAllDocs] = useState<
+    Array<{ id: string; name: string; type: string }>
+  >([]);
+  const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
+  const [generating, setGenerating] = useState(false);
+
+  useEffect(() => {
+    if (!flowchartOpen) return;
+    fetch("/api/documents/names")
+      .then((r) => r.json())
+      .then((data) => setAllDocs(data.documents || []))
+      .catch(() => {});
+  }, [flowchartOpen]);
+
+  const handleGenerateFlowchart = useCallback(async () => {
+    const api = excalidrawApiRef.current;
+    if (!api || selectedDocIds.size === 0) return;
+    setGenerating(true);
+    try {
+      const elements = await generateFlowchart([...selectedDocIds]);
+      if (elements.length > 0) {
+        const existing = api.getSceneElements() || [];
+        api.updateScene({ elements: [...existing, ...elements] });
+        api.scrollToContent(elements, { fitToContent: true });
+      }
+      setFlowchartOpen(false);
+      setSelectedDocIds(new Set());
+    } catch (err) {
+      console.error("Flowchart generation failed:", err);
+    } finally {
+      setGenerating(false);
+    }
+  }, [selectedDocIds]);
+
+  const toggleDocSelection = useCallback((docId: string) => {
+    setSelectedDocIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(docId)) next.delete(docId);
+      else next.add(docId);
+      return next;
+    });
+  }, []);
+
+  const [exportFormat, setExportFormat] = useState<"png" | "svg">("png");
+
+  const handleExport = useCallback(async () => {
+    const api = excalidrawApiRef.current;
+    if (!api) return;
+    try {
+      if (exportFormat === "svg") {
+        const svg = await api.exportToSvg();
+        const svgStr = new XMLSerializer().serializeToString(svg);
+        const blob = new Blob([svgStr], { type: "image/svg+xml" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${docName}.svg`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        const blob = await api.exportToBlob({
+          mimeType: "image/png",
+          quality: 1,
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${docName}.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      console.error("Export failed:", err);
+    }
+  }, [docName, exportFormat]);
+
   if (!ExcalidrawComp || initialData === undefined) {
     return (
       <div className="editor-loading">
@@ -97,11 +305,15 @@ export function ExcalidrawEditor({ documentId }: ExcalidrawEditorProps) {
   }
 
   const excalidrawProps: any = {};
+  const libraryItems = LIBRARY_PRESETS;
   if (initialData) {
     excalidrawProps.initialData = {
       elements: initialData.elements || [],
       appState: initialData.appState || {},
+      libraryItems,
     };
+  } else {
+    excalidrawProps.initialData = { libraryItems };
   }
 
   return (
@@ -109,13 +321,99 @@ export function ExcalidrawEditor({ documentId }: ExcalidrawEditorProps) {
       documentId={documentId}
       adapter={adapter}
       saveStatus={saveStatus}
+      onExport={handleExport}
+      exportLabel={exportFormat === "svg" ? "Export SVG" : "Export PNG"}
+      exportExtra={
+        <>
+          <select
+            className="export-format-select"
+            value={exportFormat}
+            onChange={(e) => setExportFormat(e.target.value as "png" | "svg")}
+          >
+            <option value="png">PNG</option>
+            <option value="svg">SVG</option>
+          </select>
+          <button
+            className={`editor-topbar-btn${flowchartOpen ? " editor-topbar-btn--active" : ""}`}
+            onClick={() => setFlowchartOpen((v) => !v)}
+            title="Generate flowchart from documents"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="1" y="1" width="5" height="4" rx="1" />
+              <rect x="10" y="1" width="5" height="4" rx="1" />
+              <rect x="5.5" y="11" width="5" height="4" rx="1" />
+              <path d="M3.5 5v3h4.5v3M12.5 5v3H8v3" />
+            </svg>
+            <span>Flowchart</span>
+          </button>
+        </>
+      }
     >
-      <ExcalidrawComp
-        onChange={handleChange}
-        excalidrawAPI={handleExcalidrawApi}
-        theme="dark"
-        {...excalidrawProps}
-      />
+      {flowchartOpen && (
+        <div
+          className={`flowchart-panel${isMobile ? " flowchart-panel--mobile-overlay" : ""}`}
+        >
+          <div className="flowchart-panel__header">
+            <h4>Generate Flowchart from Documents</h4>
+            <button
+              className="flowchart-panel__close"
+              onClick={() => setFlowchartOpen(false)}
+            >
+              &times;
+            </button>
+          </div>
+          <p className="flowchart-panel__hint">
+            Select documents to visualize as a flowchart. Markdown headings
+            become sections, Kanban columns become groups.
+          </p>
+          <div className="flowchart-panel__list">
+            {allDocs
+              .filter((d) => d.id !== documentId)
+              .map((doc) => (
+                <label key={doc.id} className="flowchart-panel__item">
+                  <input
+                    type="checkbox"
+                    checked={selectedDocIds.has(doc.id)}
+                    onChange={() => toggleDocSelection(doc.id)}
+                  />
+                  <span className="flowchart-panel__name">{doc.name}</span>
+                  <span className="flowchart-panel__type">{doc.type}</span>
+                </label>
+              ))}
+            {allDocs.filter((d) => d.id !== documentId).length === 0 && (
+              <div className="flowchart-panel__empty">
+                No other documents found. Create some documents first!
+              </div>
+            )}
+          </div>
+          <button
+            className="flowchart-panel__generate"
+            disabled={selectedDocIds.size === 0 || generating}
+            onClick={handleGenerateFlowchart}
+          >
+            {generating
+              ? "Generating..."
+              : `Generate from ${selectedDocIds.size} document${selectedDocIds.size !== 1 ? "s" : ""}`}
+          </button>
+        </div>
+      )}
+      <div style={{ width: "100%", height: "100%", touchAction: "none" }}>
+        <ExcalidrawComp
+          onChange={handleChange}
+          excalidrawAPI={handleExcalidrawApi}
+          theme="dark"
+          {...excalidrawProps}
+        />
+      </div>
     </EditorShell>
   );
 }

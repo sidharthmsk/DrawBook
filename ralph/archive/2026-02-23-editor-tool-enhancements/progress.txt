@@ -1,0 +1,16 @@
+# Drawbook - Editor Tool Enhancements
+# Branch: ralph/editor-tool-enhancements
+# Started: 2026-02-23
+
+## US-001: Add Make Real CSS styles for tldraw - PASS
+## US-002: Add SVG and PNG export to TldrawEditor - PASS
+## US-003: Add SVG export to ExcalidrawEditor - PASS
+## US-004: Add word count and reading time to MarkdownEditor - PASS
+## US-005: Add CSV export to SpreadsheetEditor - PASS
+## US-006: Add Spreadsheet AI applyContent for cell updates - PASS
+## US-007: Add Kanban card due dates - PASS
+## US-008: Add Kanban column WIP limits - PASS
+## US-009: Add dashboard grid view for documents - PASS
+## US-010: Add Excalidraw library panel with shape presets - PASS
+## US-011: Add Markdown editor table of contents sidebar - PASS
+## US-012: Add tldraw dark mode toggle - PASS

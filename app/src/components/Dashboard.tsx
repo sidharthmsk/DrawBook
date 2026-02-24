@@ -8,6 +8,8 @@ import {
 } from "react";
 import { useConfirm } from "./ConfirmDialog";
 import { MindMapView } from "./MindMapView";
+import { LinkGraph } from "./LinkGraph";
+import { CalendarView } from "./CalendarView";
 
 type DocumentType =
   | "tldraw"
@@ -16,7 +18,8 @@ type DocumentType =
   | "markdown"
   | "pdf"
   | "spreadsheet"
-  | "kanban";
+  | "kanban"
+  | "code";
 
 function typeFromId(id: string): DocumentType {
   if (id.startsWith("excalidraw-")) return "excalidraw";
@@ -25,6 +28,7 @@ function typeFromId(id: string): DocumentType {
   if (id.startsWith("pdf-")) return "pdf";
   if (id.startsWith("spreadsheet-")) return "spreadsheet";
   if (id.startsWith("kanban-")) return "kanban";
+  if (id.startsWith("code-")) return "code";
   return "tldraw";
 }
 
@@ -34,6 +38,8 @@ interface DocumentItem {
   folderId: string | null;
   type: DocumentType;
   modifiedAt: string;
+  starred?: boolean;
+  tags?: string[];
 }
 
 interface Folder {
@@ -103,6 +109,7 @@ const TYPE_CONFIG: Record<DocumentType, { label: string; color: string }> = {
   pdf: { label: "PDF", color: "var(--type-pdf)" },
   spreadsheet: { label: "Spreadsheet", color: "var(--type-spreadsheet)" },
   kanban: { label: "Kanban", color: "var(--type-kanban)" },
+  code: { label: "Code", color: "var(--type-code)" },
 };
 
 /* ─── Inline SVG Icons ─── */
@@ -347,6 +354,22 @@ const IconKanban = () => (
   </svg>
 );
 
+const IconCode = () => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <polyline points="16 18 22 12 16 6" />
+    <polyline points="8 6 2 12 8 18" />
+  </svg>
+);
+
 const TYPE_ICONS: Record<DocumentType, () => JSX.Element> = {
   tldraw: IconTldraw,
   excalidraw: IconExcalidraw,
@@ -355,6 +378,7 @@ const TYPE_ICONS: Record<DocumentType, () => JSX.Element> = {
   pdf: IconPdf,
   spreadsheet: IconSpreadsheet,
   kanban: IconKanban,
+  code: IconCode,
 };
 
 function ClickOrDouble({
@@ -429,6 +453,7 @@ function DocContextMenu({
   index,
   openDoc,
   startRename,
+  duplicateDoc,
   deleteDoc,
   toggleSelect,
   setMoveMenuDocId,
@@ -436,11 +461,14 @@ function DocContextMenu({
   moveDocToFolder,
   folderTree,
   setOpenMenuId,
+  onEditTags,
+  onSaveAsTemplate,
 }: {
   doc: DocumentItem;
   index: number;
   openDoc: (doc: DocumentItem) => void;
   startRename: (id: string, kind: "doc" | "folder", name: string) => void;
+  duplicateDoc: (id: string) => void;
   deleteDoc: (id: string) => void;
   toggleSelect: (id: string, index: number, shift: boolean) => void;
   setMoveMenuDocId: (fn: (v: string | null) => string | null) => void;
@@ -448,6 +476,8 @@ function DocContextMenu({
   moveDocToFolder: (docId: string, folderId: string | null) => void;
   folderTree: FolderNode[];
   setOpenMenuId: (v: string | null) => void;
+  onEditTags: (docId: string) => void;
+  onSaveAsTemplate: (docId: string) => void;
 }) {
   const showMoveMenu = moveMenuDocId === doc.id;
   return (
@@ -455,6 +485,22 @@ function DocContextMenu({
       <button onClick={() => openDoc(doc)}>Open</button>
       <button onClick={() => startRename(doc.id, "doc", doc.name)}>
         Rename
+      </button>
+      <button
+        onClick={() => {
+          duplicateDoc(doc.id);
+          setOpenMenuId(null);
+        }}
+      >
+        Duplicate
+      </button>
+      <button
+        onClick={() => {
+          onEditTags(doc.id);
+          setOpenMenuId(null);
+        }}
+      >
+        Tags...
       </button>
       <div
         className="dropdown-menu__hover-parent"
@@ -504,6 +550,14 @@ function DocContextMenu({
       >
         Select
       </button>
+      <button
+        onClick={() => {
+          onSaveAsTemplate(doc.id);
+          setOpenMenuId(null);
+        }}
+      >
+        Save as Template
+      </button>
       <button className="danger" onClick={() => deleteDoc(doc.id)}>
         Delete
       </button>
@@ -528,7 +582,68 @@ export function Dashboard({ config }: { config: AppConfig }) {
   const [renameValue, setRenameValue] = useState("");
   const renameCancelled = useRef(false);
   const [searchTerm, setSearchTerm] = useState("");
+  type SortKey =
+    | "modified-desc"
+    | "modified-asc"
+    | "name-asc"
+    | "name-desc"
+    | "type";
+  const [sortKey, setSortKey] = useState<SortKey>(
+    () => (localStorage.getItem("drawbook_sort") as SortKey) || "modified-desc",
+  );
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [tagEditDocId, setTagEditDocId] = useState<string | null>(null);
+  const [tagInput, setTagInput] = useState("");
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [aiTemplateOpen, setAiTemplateOpen] = useState(false);
+  const [aiTemplatePrompt, setAiTemplatePrompt] = useState("");
+  const [aiTemplateType, setAiTemplateType] = useState<"markdown" | "kanban">(
+    "markdown",
+  );
+  const [aiTemplateLoading, setAiTemplateLoading] = useState(false);
   const [draggingDocId, setDraggingDocId] = useState<string | null>(null);
+  const [showTrash, setShowTrash] = useState(false);
+  const [showLinkGraph, setShowLinkGraph] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [obsidianImportOpen, setObsidianImportOpen] = useState(false);
+  const [fleetingOpen, setFleetingOpen] = useState(false);
+  const [fleetingNotes, setFleetingNotes] = useState<
+    Array<{
+      id: string;
+      text: string;
+      done: boolean;
+      createdAt: string;
+      documentId?: string;
+    }>
+  >([]);
+  const [fleetingInput, setFleetingInput] = useState("");
+  const [fleetingTypeMenu, setFleetingTypeMenu] = useState<string | null>(null);
+  const [obsidianImporting, setObsidianImporting] = useState(false);
+  const [obsidianImportResult, setObsidianImportResult] = useState<{
+    imported: number;
+    skipped: number;
+    folders: number;
+  } | null>(null);
+  const [templates, setTemplates] = useState<
+    Array<{
+      id: string;
+      name: string;
+      type: string;
+      createdAt: string;
+    }>
+  >([]);
+  const [trashDocs, setTrashDocs] = useState<
+    Array<{ id: string; name: string; type: string; deletedAt: string }>
+  >([]);
+  const [contentSearchResults, setContentSearchResults] = useState<Array<{
+    id: string;
+    name: string;
+    type: string;
+    snippet: string;
+  }> | null>(null);
+  const [contentSearching, setContentSearching] = useState(false);
+  const contentSearchTimeout = useRef<NodeJS.Timeout | null>(null);
+  const [focusedDocIndex, setFocusedDocIndex] = useState(-1);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
@@ -540,11 +655,16 @@ export function Dashboard({ config }: { config: AppConfig }) {
   const lastSelectedIndex = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [viewMode, setViewMode] = useState<"list" | "mindmap">(() => {
+  const [viewMode, setViewMode] = useState<
+    "list" | "grid" | "mindmap" | "calendar"
+  >(() => {
     try {
       return (
-        (localStorage.getItem("drawbook_view_mode") as "list" | "mindmap") ||
-        "list"
+        (localStorage.getItem("drawbook_view_mode") as
+          | "list"
+          | "grid"
+          | "mindmap"
+          | "calendar") || "list"
       );
     } catch {
       return "list";
@@ -669,6 +789,27 @@ export function Dashboard({ config }: { config: AppConfig }) {
   }, []);
 
   useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "n") {
+        e.preventDefault();
+        setNewDropdownOpen(true);
+      }
+      const tag = (e.target as HTMLElement).tagName;
+      if (
+        e.key === "?" &&
+        tag !== "INPUT" &&
+        tag !== "TEXTAREA" &&
+        tag !== "SELECT"
+      ) {
+        e.preventDefault();
+        setShortcutsOpen(true);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  useEffect(() => {
     if (!openMenuId && !newDropdownOpen && !bulkMoveOpen) return;
     const closeMenus = () => {
       setOpenMenuId(null);
@@ -691,6 +832,17 @@ export function Dashboard({ config }: { config: AppConfig }) {
   };
 
   const openDoc = (doc: DocumentItem) => {
+    try {
+      const raw = localStorage.getItem("drawbook_recent");
+      const recent: string[] = raw ? JSON.parse(raw) : [];
+      const updated = [doc.id, ...recent.filter((id) => id !== doc.id)].slice(
+        0,
+        10,
+      );
+      localStorage.setItem("drawbook_recent", JSON.stringify(updated));
+    } catch {
+      /* ignore */
+    }
     window.location.href = `/?doc=${doc.id}&type=${doc.type}`;
   };
 
@@ -716,6 +868,41 @@ export function Dashboard({ config }: { config: AppConfig }) {
     }
 
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleObsidianImport = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setObsidianImporting(true);
+    setObsidianImportResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      if (currentFolder) formData.append("folderId", currentFolder);
+      const res = await fetch("/api/import/obsidian", {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Import failed");
+      }
+      const data = await res.json();
+      setObsidianImportResult({
+        imported: data.imported,
+        skipped: data.skipped,
+        folders: data.folders,
+      });
+      await loadData();
+    } catch (err) {
+      console.error("Obsidian import failed:", err);
+      setObsidianImportResult(null);
+    } finally {
+      setObsidianImporting(false);
+    }
+    if (e.target) e.target.value = "";
   };
 
   const currentFolderName = useMemo(() => {
@@ -760,15 +947,95 @@ export function Dashboard({ config }: { config: AppConfig }) {
   }, [allDocs, folders]);
 
   const visibleDocs = useMemo(() => {
+    let docs: DocumentItem[];
     if (!searchTerm.trim()) {
-      return allDocs.filter((doc) => doc.folderId === currentFolder);
+      docs = allDocs.filter((doc) => doc.folderId === currentFolder);
+    } else {
+      const normalized = searchTerm.trim().toLowerCase();
+      docs = allDocs.filter(
+        (doc) =>
+          doc.name.toLowerCase().includes(normalized) ||
+          doc.id.toLowerCase().includes(normalized),
+      );
     }
-    const normalized = searchTerm.trim().toLowerCase();
-    return allDocs.filter(
-      (doc) =>
-        doc.name.toLowerCase().includes(normalized) ||
-        doc.id.toLowerCase().includes(normalized),
-    );
+    const sorted = [...docs];
+    switch (sortKey) {
+      case "modified-asc":
+        sorted.sort(
+          (a, b) =>
+            new Date(a.modifiedAt).getTime() - new Date(b.modifiedAt).getTime(),
+        );
+        break;
+      case "name-asc":
+        sorted.sort((a, b) => a.name.localeCompare(b.name));
+        break;
+      case "name-desc":
+        sorted.sort((a, b) => b.name.localeCompare(a.name));
+        break;
+      case "type":
+        sorted.sort(
+          (a, b) =>
+            a.type.localeCompare(b.type) || a.name.localeCompare(b.name),
+        );
+        break;
+      default:
+        sorted.sort(
+          (a, b) =>
+            new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime(),
+        );
+    }
+    sorted.sort((a, b) => (b.starred ? 1 : 0) - (a.starred ? 1 : 0));
+    if (activeTag) {
+      return sorted.filter((d) => d.tags?.includes(activeTag));
+    }
+    return sorted;
+  }, [allDocs, currentFolder, searchTerm, sortKey, activeTag]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "ArrowDown" || e.key === "j") {
+        e.preventDefault();
+        setFocusedDocIndex((prev) =>
+          Math.min(prev + 1, visibleDocs.length - 1),
+        );
+      }
+      if (e.key === "ArrowUp" || e.key === "k") {
+        e.preventDefault();
+        setFocusedDocIndex((prev) => Math.max(prev - 1, 0));
+      }
+      if (
+        e.key === "Enter" &&
+        focusedDocIndex >= 0 &&
+        focusedDocIndex < visibleDocs.length
+      ) {
+        e.preventDefault();
+        openDoc(visibleDocs[focusedDocIndex]);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [focusedDocIndex, visibleDocs, openDoc]);
+
+  const allTags = useMemo(() => {
+    const tagSet = new Set<string>();
+    allDocs.forEach((d) => d.tags?.forEach((t) => tagSet.add(t)));
+    return [...tagSet].sort();
+  }, [allDocs]);
+
+  const recentDocs = useMemo(() => {
+    if (currentFolder || searchTerm.trim()) return [];
+    try {
+      const raw = localStorage.getItem("drawbook_recent");
+      const ids: string[] = raw ? JSON.parse(raw) : [];
+      return ids
+        .map((id) => allDocs.find((d) => d.id === id))
+        .filter((d): d is DocumentItem => !!d)
+        .slice(0, 5);
+    } catch {
+      return [];
+    }
   }, [allDocs, currentFolder, searchTerm]);
 
   const createFolder = async (e: FormEvent) => {
@@ -821,7 +1088,12 @@ export function Dashboard({ config }: { config: AppConfig }) {
   };
 
   const deleteDoc = async (docId: string) => {
-    if (!(await confirm({ message: "Delete this document?", danger: true })))
+    if (
+      !(await confirm({
+        message: "Move this document to trash?",
+        danger: true,
+      }))
+    )
       return;
     try {
       const res = await fetch(`/api/delete/${docId}`, { method: "DELETE" });
@@ -829,6 +1101,317 @@ export function Dashboard({ config }: { config: AppConfig }) {
       setAllDocs((prev) => prev.filter((doc) => doc.id !== docId));
     } catch (err) {
       console.error("Failed to delete document:", err);
+    }
+  };
+
+  const loadTrash = async () => {
+    try {
+      const res = await fetch("/api/trash");
+      const data = await res.json();
+      setTrashDocs(data.documents || []);
+    } catch (err) {
+      console.error("Failed to load trash:", err);
+    }
+  };
+
+  const loadTemplates = async () => {
+    try {
+      const res = await fetch("/api/templates");
+      const data = await res.json();
+      setTemplates(data.templates || []);
+    } catch (err) {
+      console.error("Failed to load templates:", err);
+    }
+  };
+
+  const useTemplate = async (templateId: string) => {
+    try {
+      const res = await fetch(`/api/templates/${templateId}/use`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folderId: currentFolder }),
+      });
+      if (!res.ok) throw new Error("Use template failed");
+      const data = await res.json();
+      window.location.href = `/?doc=${data.documentId}&type=${data.type}`;
+    } catch (err) {
+      console.error("Failed to use template:", err);
+    }
+  };
+
+  const deleteTemplate = async (templateId: string) => {
+    if (
+      !(await confirm({
+        message: "Delete this template?",
+        danger: true,
+      }))
+    )
+      return;
+    try {
+      const res = await fetch(`/api/templates/${templateId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Delete template failed");
+      setTemplates((prev) => prev.filter((t) => t.id !== templateId));
+    } catch (err) {
+      console.error("Failed to delete template:", err);
+    }
+  };
+
+  const saveDocAsTemplate = async (docId: string) => {
+    const doc = allDocs.find((d) => d.id === docId);
+    const name = window.prompt("Template name:", doc ? doc.name : docId);
+    if (!name?.trim()) return;
+    try {
+      const res = await fetch(`/api/templates/from-doc/${docId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      if (!res.ok) throw new Error("Save as template failed");
+    } catch (err) {
+      console.error("Failed to save as template:", err);
+    }
+  };
+
+  const loadFleetingNotes = async () => {
+    try {
+      const res = await fetch("/api/fleeting");
+      const data = await res.json();
+      setFleetingNotes(data.notes || []);
+    } catch (err) {
+      console.error("Failed to load fleeting notes:", err);
+    }
+  };
+
+  const addFleetingNote = async () => {
+    if (!fleetingInput.trim()) return;
+    try {
+      const res = await fetch("/api/fleeting", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: fleetingInput.trim() }),
+      });
+      if (!res.ok) throw new Error("Create failed");
+      const data = await res.json();
+      setFleetingNotes((prev) => [data.note, ...prev]);
+      setFleetingInput("");
+    } catch (err) {
+      console.error("Failed to add fleeting note:", err);
+    }
+  };
+
+  const toggleFleetingDone = async (noteId: string, done: boolean) => {
+    try {
+      await fetch(`/api/fleeting/${noteId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ done }),
+      });
+      setFleetingNotes((prev) =>
+        prev.map((n) => (n.id === noteId ? { ...n, done } : n)),
+      );
+    } catch (err) {
+      console.error("Failed to toggle fleeting note:", err);
+    }
+  };
+
+  const deleteFleetingNote = async (noteId: string) => {
+    try {
+      await fetch(`/api/fleeting/${noteId}`, { method: "DELETE" });
+      setFleetingNotes((prev) => prev.filter((n) => n.id !== noteId));
+    } catch (err) {
+      console.error("Failed to delete fleeting note:", err);
+    }
+  };
+
+  const openFleetingAs = async (noteId: string, type: DocumentType) => {
+    setFleetingTypeMenu(null);
+    try {
+      const res = await fetch(`/api/fleeting/${noteId}/open-as`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type }),
+      });
+      if (!res.ok) throw new Error("Open-as failed");
+      const data = await res.json();
+      setFleetingNotes((prev) =>
+        prev.map((n) =>
+          n.id === noteId
+            ? { ...n, done: true, documentId: data.documentId }
+            : n,
+        ),
+      );
+      window.location.href = `/?doc=${data.documentId}&type=${data.type}`;
+    } catch (err) {
+      console.error("Failed to open fleeting as doc:", err);
+    }
+  };
+
+  const restoreFromTrash = async (docId: string) => {
+    try {
+      const res = await fetch(`/api/trash/${docId}/restore`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("Restore failed");
+      setTrashDocs((prev) => prev.filter((d) => d.id !== docId));
+      await loadData();
+    } catch (err) {
+      console.error("Failed to restore:", err);
+    }
+  };
+
+  const permanentDelete = async (docId: string) => {
+    if (
+      !(await confirm({
+        message: "Permanently delete? This cannot be undone.",
+        danger: true,
+      }))
+    )
+      return;
+    try {
+      const res = await fetch(`/api/delete/${docId}?permanent=true`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Permanent delete failed");
+      setTrashDocs((prev) => prev.filter((d) => d.id !== docId));
+    } catch (err) {
+      console.error("Failed to permanently delete:", err);
+    }
+  };
+
+  const emptyTrash = async () => {
+    if (
+      !(await confirm({
+        message: `Permanently delete all ${trashDocs.length} items in trash?`,
+        danger: true,
+      }))
+    )
+      return;
+    try {
+      const res = await fetch("/api/trash/empty", { method: "POST" });
+      if (!res.ok) throw new Error("Empty trash failed");
+      setTrashDocs([]);
+    } catch (err) {
+      console.error("Failed to empty trash:", err);
+    }
+  };
+
+  const doContentSearch = useCallback((term: string) => {
+    if (contentSearchTimeout.current)
+      clearTimeout(contentSearchTimeout.current);
+    if (term.length < 2) {
+      setContentSearchResults(null);
+      return;
+    }
+    setContentSearching(true);
+    contentSearchTimeout.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/search/content?q=${encodeURIComponent(term)}`,
+        );
+        const data = await res.json();
+        setContentSearchResults(data.results || []);
+      } catch {
+        setContentSearchResults([]);
+      } finally {
+        setContentSearching(false);
+      }
+    }, 300);
+  }, []);
+
+  const toggleStar = async (docId: string) => {
+    try {
+      const res = await fetch(`/api/documents/${docId}/star`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("Star toggle failed");
+      const { starred } = (await res.json()) as { starred: boolean };
+      setAllDocs((prev) =>
+        prev.map((d) => (d.id === docId ? { ...d, starred } : d)),
+      );
+    } catch (err) {
+      console.error("Failed to toggle star:", err);
+    }
+  };
+
+  const saveDocTags = async (docId: string, tags: string[]) => {
+    try {
+      const res = await fetch(`/api/documents/${docId}/tags`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags }),
+      });
+      if (!res.ok) throw new Error("Tag save failed");
+      setAllDocs((prev) =>
+        prev.map((d) => (d.id === docId ? { ...d, tags } : d)),
+      );
+    } catch (err) {
+      console.error("Failed to save tags:", err);
+    }
+  };
+
+  const createFromAiTemplate = async () => {
+    if (!aiTemplatePrompt.trim()) return;
+    setAiTemplateLoading(true);
+    try {
+      const systemMsg =
+        aiTemplateType === "kanban"
+          ? "Generate a Kanban board as JSON: { columns: [{ id, title, cardIds }], cards: [{ id, title, description }] }. Return ONLY valid JSON, no markdown."
+          : "Generate markdown content. Return ONLY the markdown text, no code fences.";
+      const res = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: aiTemplatePrompt.trim() }],
+          editorType: aiTemplateType,
+          canvasContext: systemMsg,
+        }),
+      });
+      const data = await res.json();
+      const content = data.content || data.message || "";
+      const docId = `${aiTemplateType}-${Date.now()}`;
+      let snapshot: unknown;
+      if (aiTemplateType === "kanban") {
+        try {
+          snapshot = JSON.parse(content);
+        } catch {
+          snapshot = {
+            columns: [{ id: "col-1", title: "To Do", cardIds: [] }],
+            cards: [],
+          };
+        }
+      } else {
+        snapshot = { content };
+      }
+      await fetch(`/api/save/${docId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ snapshot, type: aiTemplateType }),
+      });
+      const name = aiTemplatePrompt.trim().slice(0, 40);
+      await fetch(`/api/rename/${docId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      setAiTemplateOpen(false);
+      setAiTemplatePrompt("");
+      window.location.hash = `#/doc/${docId}`;
+    } catch (err) {
+      console.error("AI template error:", err);
+    } finally {
+      setAiTemplateLoading(false);
+    }
+  };
+
+  const duplicateDoc = async (docId: string) => {
+    try {
+      const res = await fetch(`/api/duplicate/${docId}`, { method: "POST" });
+      if (!res.ok) throw new Error("Duplicate failed");
+      await loadData();
+    } catch (err) {
+      console.error("Failed to duplicate document:", err);
     }
   };
 
@@ -1043,6 +1626,10 @@ export function Dashboard({ config }: { config: AppConfig }) {
           className={`folder-link ${currentFolder === null ? "active drop-target" : ""}`}
           onClick={() => {
             setCurrentFolder(null);
+            setShowTrash(false);
+            setShowLinkGraph(false);
+            setShowTemplates(false);
+
             setSidebarOpen(false);
           }}
           onDragOver={(e) => e.preventDefault()}
@@ -1270,6 +1857,82 @@ export function Dashboard({ config }: { config: AppConfig }) {
           })}
         </div>
 
+        <div style={{ flex: 1 }} />
+        <button
+          className={`folder-link trash-link${showTrash ? " active" : ""}`}
+          onClick={() => {
+            setShowTrash(true);
+            setShowTemplates(false);
+            setShowLinkGraph(false);
+
+            setCurrentFolder(null);
+            loadTrash();
+          }}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M2 4h12M5 4V3a1 1 0 011-1h4a1 1 0 011 1v1M6 7v5M10 7v5M3 4l1 9a1 1 0 001 1h6a1 1 0 001-1l1-9" />
+          </svg>
+          <span>Trash</span>
+        </button>
+        <button
+          className={`folder-link trash-link${showLinkGraph ? " active" : ""}`}
+          onClick={() => {
+            setShowLinkGraph(true);
+            setShowTrash(false);
+            setShowTemplates(false);
+          }}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="4" cy="4" r="2" />
+            <circle cx="12" cy="4" r="2" />
+            <circle cx="8" cy="12" r="2" />
+            <path d="M6 4h4M5.5 5.5L7 10.5M10.5 5.5L9 10.5" />
+          </svg>
+          <span>Link Graph</span>
+        </button>
+        <button
+          className={`folder-link trash-link${showTemplates ? " active" : ""}`}
+          onClick={() => {
+            setShowTemplates(true);
+            setShowTrash(false);
+            setShowLinkGraph(false);
+
+            loadTemplates();
+          }}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <rect x="2" y="2" width="12" height="12" rx="1" />
+            <path d="M5 2v5l2.5-1.5L10 7V2" />
+          </svg>
+          <span>Templates</span>
+        </button>
         <div className="sidebar-resize-handle" onMouseDown={onResizeStart} />
       </aside>
 
@@ -1290,10 +1953,33 @@ export function Dashboard({ config }: { config: AppConfig }) {
               <input
                 className="search-input"
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search documents..."
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
+                  setShowTrash(false);
+                  setShowLinkGraph(false);
+                  setShowTemplates(false);
+
+                  doContentSearch(e.target.value);
+                }}
+                placeholder="Search documents & content..."
               />
             </div>
+
+            <select
+              className="sort-select"
+              value={sortKey}
+              onChange={(e) => {
+                const val = e.target.value as SortKey;
+                setSortKey(val);
+                localStorage.setItem("drawbook_sort", val);
+              }}
+            >
+              <option value="modified-desc">Modified (newest)</option>
+              <option value="modified-asc">Modified (oldest)</option>
+              <option value="name-asc">Name (A-Z)</option>
+              <option value="name-desc">Name (Z-A)</option>
+              <option value="type">Type</option>
+            </select>
 
             <div className="view-toggle">
               <button
@@ -1311,6 +1997,27 @@ export function Dashboard({ config }: { config: AppConfig }) {
                   strokeLinecap="round"
                 >
                   <path d="M2 4h12M2 8h12M2 12h12" />
+                </svg>
+              </button>
+              <button
+                className={`view-toggle__btn ${viewMode === "grid" ? "view-toggle__btn--active" : ""}`}
+                onClick={() => setViewMode("grid")}
+                title="Grid view"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="1" y="1" width="5.5" height="5.5" rx="1" />
+                  <rect x="9.5" y="1" width="5.5" height="5.5" rx="1" />
+                  <rect x="1" y="9.5" width="5.5" height="5.5" rx="1" />
+                  <rect x="9.5" y="9.5" width="5.5" height="5.5" rx="1" />
                 </svg>
               </button>
               <button
@@ -1334,22 +2041,64 @@ export function Dashboard({ config }: { config: AppConfig }) {
                   <path d="M8 5v2M6.5 8.5L4.5 9.5M9.5 8.5L11.5 9.5" />
                 </svg>
               </button>
+              <button
+                className={`view-toggle__btn ${viewMode === "calendar" ? "view-toggle__btn--active" : ""}`}
+                onClick={() => setViewMode("calendar")}
+                title="Calendar view"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="2" y="3" width="12" height="11" rx="1" />
+                  <path d="M2 6.5h12" />
+                  <path d="M5 1.5v3M11 1.5v3" />
+                </svg>
+              </button>
             </div>
 
             <button
               className="icon-action-btn"
               onClick={() => fileInputRef.current?.click()}
-              title="Upload PDF"
+              title="Upload file (PDF, Markdown, CSV)"
             >
               <IconUpload />
             </button>
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf"
+              accept=".pdf,.md,.csv"
               style={{ display: "none" }}
               onChange={handleFileUpload}
             />
+
+            <button
+              className="icon-action-btn"
+              onClick={() => {
+                setObsidianImportOpen(true);
+                setObsidianImportResult(null);
+              }}
+              title="Import Obsidian Vault"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M9 2L5 14M7 3l4 2-2 4 4 2" />
+              </svg>
+            </button>
 
             <div className="new-dropdown-wrapper">
               <button
@@ -1376,6 +2125,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
                       "markdown",
                       "spreadsheet",
                       "kanban",
+                      "code",
                     ] as DocumentType[]
                   )
                     .filter((type) => type !== "tldraw" || config.enableTldraw)
@@ -1400,12 +2150,173 @@ export function Dashboard({ config }: { config: AppConfig }) {
           </div>
         </header>
 
+        {allTags.length > 0 && (
+          <div className="tag-filter-bar">
+            <button
+              className={`tag-filter-btn${!activeTag ? " tag-filter-btn--active" : ""}`}
+              onClick={() => setActiveTag(null)}
+            >
+              All
+            </button>
+            {allTags.map((tag) => (
+              <button
+                key={tag}
+                className={`tag-filter-btn${activeTag === tag ? " tag-filter-btn--active" : ""}`}
+                onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
+        )}
+
         <p className="hint-text">
           Tip: drag any card and drop it onto a folder on the left to move it
           quickly.
         </p>
 
-        {loading ? (
+        {showLinkGraph ? (
+          <LinkGraph onClose={() => setShowLinkGraph(false)} />
+        ) : showTemplates ? (
+          <section className="templates-view">
+            <div className="templates-view__header">
+              <h3>Templates</h3>
+              <span className="templates-view__hint">
+                Save any document as a template from the editor toolbar
+              </span>
+            </div>
+            {templates.length === 0 ? (
+              <div className="empty-state">
+                <p>No templates yet</p>
+                <p style={{ fontSize: 13, color: "var(--text-tertiary)" }}>
+                  Open a document and click the Template button in the toolbar
+                  to save it as a reusable template.
+                </p>
+              </div>
+            ) : (
+              <div className="templates-view__grid">
+                {templates.map((tpl) => {
+                  const typeConf =
+                    TYPE_CONFIG[tpl.type as DocumentType] || TYPE_CONFIG.tldraw;
+                  const TypeIcon =
+                    TYPE_ICONS[tpl.type as DocumentType] || TYPE_ICONS.tldraw;
+                  return (
+                    <div
+                      key={tpl.id}
+                      className="templates-view__card"
+                      style={{ borderTopColor: typeConf.color }}
+                    >
+                      <div
+                        className="templates-view__card-icon"
+                        style={{ color: typeConf.color }}
+                      >
+                        <TypeIcon />
+                      </div>
+                      <span className="templates-view__card-name">
+                        {tpl.name}
+                      </span>
+                      <span
+                        className="templates-view__card-type"
+                        style={{ color: typeConf.color }}
+                      >
+                        {typeConf.label}
+                      </span>
+                      <span className="templates-view__card-date">
+                        {new Date(tpl.createdAt).toLocaleDateString()}
+                      </span>
+                      <div className="templates-view__card-actions">
+                        <button
+                          className="templates-view__use-btn"
+                          onClick={() => useTemplate(tpl.id)}
+                        >
+                          Use
+                        </button>
+                        <button
+                          className="templates-view__delete-btn"
+                          onClick={() => deleteTemplate(tpl.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        ) : showTrash ? (
+          <section className="trash-view">
+            <div className="trash-view__header">
+              <h3>Trash</h3>
+              {trashDocs.length > 0 && (
+                <button className="danger-btn" onClick={emptyTrash}>
+                  Empty Trash
+                </button>
+              )}
+            </div>
+            {trashDocs.length === 0 ? (
+              <div className="empty-state">
+                <p>Trash is empty</p>
+              </div>
+            ) : (
+              <div className="trash-list">
+                {trashDocs.map((doc) => {
+                  const typeConf =
+                    TYPE_CONFIG[doc.type as DocumentType] || TYPE_CONFIG.tldraw;
+                  return (
+                    <div key={doc.id} className="trash-item">
+                      <span
+                        className="trash-item__icon"
+                        style={{ color: typeConf.color }}
+                      >
+                        {typeConf.label}
+                      </span>
+                      <span className="trash-item__name">{doc.name}</span>
+                      <span className="trash-item__date">
+                        Deleted {new Date(doc.deletedAt).toLocaleDateString()}
+                      </span>
+                      <button
+                        className="trash-item__restore"
+                        onClick={() => restoreFromTrash(doc.id)}
+                      >
+                        Restore
+                      </button>
+                      <button
+                        className="trash-item__delete"
+                        onClick={() => permanentDelete(doc.id)}
+                      >
+                        Delete Forever
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        ) : contentSearchResults && contentSearchResults.length > 0 ? (
+          <section className="content-search-results">
+            <h3 className="content-search-results__title">
+              Content matches ({contentSearchResults.length})
+              {contentSearching && " ..."}
+            </h3>
+            {contentSearchResults.map((r) => (
+              <div
+                key={r.id}
+                className="content-search-result"
+                onClick={() => {
+                  const doc = allDocs.find((d) => d.id === r.id);
+                  if (doc) openDoc(doc);
+                }}
+              >
+                <span className="content-search-result__name">{r.name}</span>
+                <span className="content-search-result__type">{r.type}</span>
+                <span className="content-search-result__snippet">
+                  {r.snippet}
+                </span>
+              </div>
+            ))}
+          </section>
+        ) : loading ? (
           <div className="empty-state">
             <p>Loading...</p>
           </div>
@@ -1413,6 +2324,8 @@ export function Dashboard({ config }: { config: AppConfig }) {
           <div className="empty-state">
             <p>{error}</p>
           </div>
+        ) : viewMode === "calendar" ? (
+          <CalendarView docs={allDocs} onOpenDocument={openDoc} />
         ) : viewMode === "mindmap" ? (
           <MindMapView
             docs={allDocs}
@@ -1427,8 +2340,34 @@ export function Dashboard({ config }: { config: AppConfig }) {
               if (folderId) setCurrentFolder(folderId);
               createNewDocument(type);
             }}
-            onCreateFolder={(parentId) => {
-              setCreatingFolder(parentId ?? "__root__");
+            onCreateFolder={async (parentId) => {
+              const name = window.prompt("Folder name:");
+              if (!name?.trim()) return;
+              try {
+                const res = await fetch("/api/folders", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    name: name.trim(),
+                    parentId: parentId ?? null,
+                  }),
+                });
+                if (!res.ok) throw new Error("Create folder failed");
+                if (parentId) {
+                  setExpandedFolders((prev) => {
+                    const next = new Set(prev);
+                    next.add(parentId);
+                    localStorage.setItem(
+                      "drawbook_expanded_folders",
+                      JSON.stringify([...next]),
+                    );
+                    return next;
+                  });
+                }
+                await loadData();
+              } catch (err) {
+                console.error("Failed to create folder:", err);
+              }
             }}
             onRenameDocument={(docId) => {
               const doc = allDocs.find((d) => d.id === docId);
@@ -1481,7 +2420,55 @@ export function Dashboard({ config }: { config: AppConfig }) {
                 });
             }}
           />
-        ) : visibleDocs.length === 0 ? (
+        ) : viewMode === "grid" ? (
+          visibleDocs.length === 0 ? (
+            <div className="empty-state">
+              <h3>No documents yet</h3>
+              <p>Create a new document to get started.</p>
+            </div>
+          ) : (
+            <div className="doc-grid">
+              {visibleDocs.map((doc) => {
+                const typeConf = TYPE_CONFIG[doc.type] || TYPE_CONFIG.tldraw;
+                const TypeIcon = TYPE_ICONS[doc.type] || TYPE_ICONS.tldraw;
+                return (
+                  <div
+                    key={doc.id}
+                    className="doc-grid__card"
+                    style={{ borderTopColor: typeConf.color }}
+                    onClick={() => openDoc(doc)}
+                  >
+                    <div
+                      className="doc-grid__icon"
+                      style={{ color: typeConf.color }}
+                    >
+                      <TypeIcon />
+                    </div>
+                    <span className="doc-grid__name">{doc.name}</span>
+                    <span
+                      className="doc-grid__type"
+                      style={{ color: typeConf.color }}
+                    >
+                      {typeConf.label}
+                    </span>
+                    <span className="doc-grid__date">
+                      {new Date(doc.modifiedAt).toLocaleDateString()}
+                    </span>
+                    <button
+                      className="doc-grid__star"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleStar(doc.id);
+                      }}
+                    >
+                      {doc.starred ? "★" : "☆"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )
+        ) : visibleDocs.length === 0 && recentDocs.length === 0 ? (
           <div className="empty-state">
             <h3>No documents yet</h3>
             <p>
@@ -1491,6 +2478,55 @@ export function Dashboard({ config }: { config: AppConfig }) {
           </div>
         ) : (
           <>
+            {(() => {
+              const starredDocs = visibleDocs.filter((d) => d.starred);
+              if (starredDocs.length === 0) return null;
+              return (
+                <section className="favorites-section">
+                  <h3 className="favorites-section__title">★ Favorites</h3>
+                  <div className="favorites-section__row">
+                    {starredDocs.map((doc) => {
+                      const typeConf =
+                        TYPE_CONFIG[doc.type] || TYPE_CONFIG.tldraw;
+                      const TypeIcon = TYPE_ICONS[doc.type] || IconTldraw;
+                      return (
+                        <button
+                          key={doc.id}
+                          className="favorites-section__card"
+                          style={{ borderLeftColor: typeConf.color }}
+                          onClick={() => openDoc(doc)}
+                        >
+                          <TypeIcon />
+                          <span className="favorites-section__name">
+                            {doc.name}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })()}
+            {recentDocs.length > 0 && (
+              <section className="recent-docs">
+                <h3 className="recent-docs__title">Recent</h3>
+                <div className="recent-docs__row">
+                  {recentDocs.map((doc) => {
+                    const TypeIcon = TYPE_ICONS[doc.type] || IconTldraw;
+                    return (
+                      <button
+                        key={doc.id}
+                        className="recent-docs__card"
+                        onClick={() => openDoc(doc)}
+                      >
+                        <TypeIcon />
+                        <span className="recent-docs__name">{doc.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
             {selectedIds.size > 0 && (
               <div className="bulk-bar">
                 <span className="bulk-bar__count">
@@ -1533,8 +2569,8 @@ export function Dashboard({ config }: { config: AppConfig }) {
             <section className="doc-list">
               <div className="doc-list__header">
                 <span className="doc-list__col doc-list__col--icon" />
+                <span className="doc-list__col" />
                 <span className="doc-list__col doc-list__col--name">Name</span>
-                <span className="doc-list__col doc-list__col--type">Type</span>
                 <span className="doc-list__col doc-list__col--date">
                   Modified
                 </span>
@@ -1549,7 +2585,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
                 return (
                   <div
                     key={doc.id}
-                    className={`doc-row${isSelected ? " doc-row--selected" : ""}`}
+                    className={`doc-row${isSelected ? " doc-row--selected" : ""}${focusedDocIndex === index ? " doc-row--focused" : ""}`}
                     draggable
                     onDragStart={(e) => {
                       if (longPressTimer.current) {
@@ -1634,6 +2670,28 @@ export function Dashboard({ config }: { config: AppConfig }) {
                       )}
                     </span>
 
+                    <button
+                      className={`doc-row__star${doc.starred ? " doc-row__star--active" : ""}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleStar(doc.id);
+                      }}
+                      title={doc.starred ? "Unstar" : "Star"}
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill={doc.starred ? "currentColor" : "none"}
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                      </svg>
+                    </button>
+
                     <span className="doc-row__name">
                       {isRenaming ? (
                         <input
@@ -1664,18 +2722,24 @@ export function Dashboard({ config }: { config: AppConfig }) {
                           {doc.name}
                         </ClickOrDouble>
                       )}
-                    </span>
-
-                    <span className="doc-row__type">
-                      <span
-                        className="type-pill"
-                        style={
-                          {
-                            "--pill-color": typeConf.color,
-                          } as React.CSSProperties
-                        }
-                      >
-                        {typeConf.label}
+                      <span className="doc-row__type">
+                        <span
+                          className="type-pill"
+                          style={
+                            {
+                              "--pill-color": typeConf.color,
+                            } as React.CSSProperties
+                          }
+                        >
+                          {typeConf.label}
+                        </span>
+                        {doc.tags &&
+                          doc.tags.length > 0 &&
+                          doc.tags.slice(0, 2).map((t) => (
+                            <span key={t} className="doc-tag-pill">
+                              {t}
+                            </span>
+                          ))}
                       </span>
                     </span>
 
@@ -1706,6 +2770,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
                           index={index}
                           openDoc={openDoc}
                           startRename={startRename}
+                          duplicateDoc={duplicateDoc}
                           deleteDoc={deleteDoc}
                           toggleSelect={toggleSelect}
                           setMoveMenuDocId={setMoveMenuDocId}
@@ -1713,6 +2778,11 @@ export function Dashboard({ config }: { config: AppConfig }) {
                           moveDocToFolder={moveDocToFolder}
                           folderTree={folderTree}
                           setOpenMenuId={setOpenMenuId}
+                          onEditTags={(id) => {
+                            setTagEditDocId(id);
+                            setTagInput("");
+                          }}
+                          onSaveAsTemplate={saveDocAsTemplate}
                         />
                       )}
                     </span>
@@ -1741,6 +2811,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
                   index={index}
                   openDoc={openDoc}
                   startRename={startRename}
+                  duplicateDoc={duplicateDoc}
                   deleteDoc={deleteDoc}
                   toggleSelect={toggleSelect}
                   setMoveMenuDocId={setMoveMenuDocId}
@@ -1748,11 +2819,601 @@ export function Dashboard({ config }: { config: AppConfig }) {
                   moveDocToFolder={moveDocToFolder}
                   folderTree={folderTree}
                   setOpenMenuId={setOpenMenuId}
+                  onEditTags={(id) => {
+                    setTagEditDocId(id);
+                    setTagInput("");
+                  }}
+                  onSaveAsTemplate={saveDocAsTemplate}
                 />
               </div>
             );
           })()}
       </main>
+
+      {shortcutsOpen && (
+        <div
+          className="quick-switcher-overlay"
+          onClick={() => setShortcutsOpen(false)}
+        >
+          <div
+            className="kanban-detail"
+            style={{ width: 380 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="kanban-detail__close"
+              onClick={() => setShortcutsOpen(false)}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              >
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
+            </button>
+            <h3 style={{ margin: "0 0 16px", fontSize: 16 }}>
+              Keyboard Shortcuts
+            </h3>
+            <div className="shortcuts-list">
+              {[
+                [
+                  navigator.platform.includes("Mac") ? "⌘ K" : "Ctrl+K",
+                  "Quick Switcher",
+                ],
+                [
+                  navigator.platform.includes("Mac") ? "⌘ N" : "Ctrl+N",
+                  "New Document",
+                ],
+                ["?", "Show this help"],
+              ].map(([key, desc]) => (
+                <div key={key} className="shortcuts-row">
+                  <kbd className="shortcuts-kbd">{key}</kbd>
+                  <span>{desc}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {aiTemplateOpen && (
+        <div
+          className="quick-switcher-overlay"
+          onClick={() => !aiTemplateLoading && setAiTemplateOpen(false)}
+        >
+          <div
+            className="kanban-detail"
+            style={{ width: 440 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="kanban-detail__close"
+              onClick={() => setAiTemplateOpen(false)}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              >
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
+            </button>
+            <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>
+              Create from AI Template
+            </h3>
+            <label className="kanban-detail__label">Document Type</label>
+            <select
+              className="sort-select"
+              style={{ width: "100%", marginBottom: 12 }}
+              value={aiTemplateType}
+              onChange={(e) =>
+                setAiTemplateType(e.target.value as "markdown" | "kanban")
+              }
+            >
+              <option value="markdown">Markdown</option>
+              <option value="kanban">Kanban Board</option>
+            </select>
+            <label className="kanban-detail__label">
+              Describe what you want
+            </label>
+            <textarea
+              className="kanban-detail__desc"
+              value={aiTemplatePrompt}
+              onChange={(e) => setAiTemplatePrompt(e.target.value)}
+              placeholder="e.g. Create a meeting notes template with agenda, action items, and decisions..."
+              rows={4}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey))
+                  createFromAiTemplate();
+              }}
+              autoFocus
+            />
+            <button
+              style={{
+                marginTop: 12,
+                width: "100%",
+                padding: "8px 16px",
+                borderRadius: 8,
+                background: "var(--accent)",
+                color: "var(--text-on-accent)",
+                border: "none",
+                cursor: "pointer",
+                opacity: aiTemplateLoading ? 0.6 : 1,
+              }}
+              onClick={createFromAiTemplate}
+              disabled={aiTemplateLoading || !aiTemplatePrompt.trim()}
+            >
+              {aiTemplateLoading ? "Generating..." : "Generate & Create"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {tagEditDocId &&
+        (() => {
+          const doc = allDocs.find((d) => d.id === tagEditDocId);
+          const currentTags = doc?.tags || [];
+          return (
+            <div
+              className="quick-switcher-overlay"
+              onClick={() => setTagEditDocId(null)}
+            >
+              <div
+                className="kanban-detail"
+                style={{ width: 400 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  className="kanban-detail__close"
+                  onClick={() => setTagEditDocId(null)}
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  >
+                    <path d="M4 4l8 8M12 4l-8 8" />
+                  </svg>
+                </button>
+                <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>Edit Tags</h3>
+                <div className="kanban-detail__labels">
+                  {currentTags.map((t) => (
+                    <span
+                      key={t}
+                      className="tag-filter-btn tag-filter-btn--active"
+                      style={{ cursor: "pointer" }}
+                      onClick={() => {
+                        const next = currentTags.filter((x) => x !== t);
+                        saveDocTags(tagEditDocId, next);
+                      }}
+                    >
+                      {t} &times;
+                    </span>
+                  ))}
+                  <input
+                    className="kanban-detail__label-input"
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && tagInput.trim()) {
+                        e.preventDefault();
+                        const val = tagInput.trim();
+                        if (!currentTags.includes(val)) {
+                          saveDocTags(tagEditDocId, [...currentTags, val]);
+                        }
+                        setTagInput("");
+                      }
+                      if (e.key === "Escape") setTagEditDocId(null);
+                    }}
+                    placeholder="Type tag and press Enter..."
+                    autoFocus
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+      {!fleetingOpen && (
+        <button
+          className="fleeting-fab"
+          onClick={() => {
+            setFleetingOpen(true);
+            loadFleetingNotes();
+          }}
+          title="Quick Notes"
+        >
+          <svg
+            width="22"
+            height="22"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M13 2H3a1 1 0 00-1 1v10a1 1 0 001 1h10a1 1 0 001-1V3a1 1 0 00-1-1z" />
+            <path d="M5 8h6M8 5v6" />
+          </svg>
+        </button>
+      )}
+
+      {fleetingOpen && (
+        <div className="fleeting-panel">
+          <div className="fleeting-panel__header">
+            <h3>Quick Notes</h3>
+            <button
+              className="fleeting-panel__close"
+              onClick={() => setFleetingOpen(false)}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              >
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
+            </button>
+          </div>
+
+          <form
+            className="fleeting-panel__input-row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              addFleetingNote();
+            }}
+          >
+            <input
+              className="fleeting-panel__input"
+              value={fleetingInput}
+              onChange={(e) => setFleetingInput(e.target.value)}
+              placeholder="Jot something down..."
+              autoFocus
+            />
+            <button
+              className="fleeting-panel__add-btn"
+              type="submit"
+              disabled={!fleetingInput.trim()}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              >
+                <path d="M8 3v10M3 8h10" />
+              </svg>
+            </button>
+          </form>
+
+          <div className="fleeting-panel__list">
+            {fleetingNotes.length === 0 && (
+              <p className="fleeting-panel__empty">
+                No quick notes yet. Type above to capture a thought.
+              </p>
+            )}
+            {fleetingNotes.map((note) => (
+              <div
+                key={note.id}
+                className={`fleeting-panel__item${note.done ? " fleeting-panel__item--done" : ""}`}
+              >
+                <button
+                  className={`fleeting-panel__check${note.done ? " fleeting-panel__check--checked" : ""}`}
+                  onClick={() => toggleFleetingDone(note.id, !note.done)}
+                >
+                  {note.done && (
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M3 8l3.5 3.5L13 5" />
+                    </svg>
+                  )}
+                </button>
+
+                <span className="fleeting-panel__text">{note.text}</span>
+
+                <div className="fleeting-panel__actions">
+                  {note.documentId ? (
+                    <button
+                      className="fleeting-panel__action-btn"
+                      title="Open linked document"
+                      onClick={() => {
+                        window.location.href = `/?doc=${note.documentId}&type=markdown`;
+                      }}
+                    >
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M5 11L11 5M11 5H6M11 5v5" />
+                      </svg>
+                    </button>
+                  ) : (
+                    <button
+                      className="fleeting-panel__action-btn"
+                      title="Open as document"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFleetingTypeMenu(
+                          fleetingTypeMenu === note.id ? null : note.id,
+                        );
+                      }}
+                    >
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M5 11L11 5M11 5H6M11 5v5" />
+                      </svg>
+                    </button>
+                  )}
+                  <button
+                    className="fleeting-panel__action-btn fleeting-panel__action-btn--delete"
+                    title="Delete"
+                    onClick={() => deleteFleetingNote(note.id)}
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                    >
+                      <path d="M4 4l8 8M12 4l-8 8" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {fleetingTypeMenu && (
+        <div
+          className="fleeting-panel__type-menu-overlay"
+          onClick={() => setFleetingTypeMenu(null)}
+        >
+          <div
+            className="fleeting-panel__type-menu"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {(
+              [
+                "markdown",
+                "excalidraw",
+                "kanban",
+                "spreadsheet",
+                "code",
+              ] as DocumentType[]
+            ).map((t) => {
+              const conf = TYPE_CONFIG[t];
+              const Icon = TYPE_ICONS[t];
+              return (
+                <button
+                  key={t}
+                  onClick={() => openFleetingAs(fleetingTypeMenu, t)}
+                >
+                  <span style={{ color: conf.color, display: "flex" }}>
+                    <Icon />
+                  </span>
+                  <span>{conf.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {obsidianImportOpen && (
+        <div
+          className="quick-switcher-overlay"
+          onClick={() => !obsidianImporting && setObsidianImportOpen(false)}
+        >
+          <div
+            className="obsidian-import-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="kanban-detail__close"
+              onClick={() => setObsidianImportOpen(false)}
+              disabled={obsidianImporting}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              >
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
+            </button>
+
+            <h3 className="obsidian-import-modal__title">
+              Import Obsidian Vault
+            </h3>
+
+            <div className="obsidian-import-modal__steps">
+              <p className="obsidian-import-modal__subtitle">
+                How to export from Obsidian:
+              </p>
+              <ol className="obsidian-import-modal__list">
+                <li>
+                  Open your vault folder in your file manager
+                  <ul>
+                    <li>
+                      <strong>Mac:</strong> Right-click vault in Finder
+                    </li>
+                    <li>
+                      <strong>Windows:</strong> Right-click vault folder in
+                      Explorer
+                    </li>
+                    <li>
+                      <strong>Linux:</strong> Right-click vault directory
+                    </li>
+                  </ul>
+                </li>
+                <li>
+                  <strong>Compress / zip</strong> the entire vault folder
+                  <ul>
+                    <li>Mac: "Compress" from right-click menu</li>
+                    <li>
+                      Windows: "Send to &rarr; Compressed (zipped) folder"
+                    </li>
+                  </ul>
+                </li>
+                <li>
+                  Upload the resulting <code>.zip</code> file below
+                </li>
+              </ol>
+
+              <div className="obsidian-import-modal__info">
+                <strong>What gets imported:</strong>
+                <ul>
+                  <li>
+                    All <code>.md</code> files as Markdown documents
+                  </li>
+                  <li>
+                    Obsidian <code>[[wikilinks]]</code> are preserved and work
+                    with Drawbook's linking system
+                  </li>
+                  <li>Folder structure is recreated</li>
+                  <li>PDFs and CSVs are imported too</li>
+                  <li>
+                    <code>.obsidian/</code> config and images/attachments are
+                    skipped
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            {obsidianImportResult ? (
+              <div className="obsidian-import-modal__result">
+                <div className="obsidian-import-modal__result-icon">
+                  <svg
+                    width="32"
+                    height="32"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="var(--accent)"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                    <polyline points="22 4 12 14.01 9 11.01" />
+                  </svg>
+                </div>
+                <p className="obsidian-import-modal__result-text">
+                  Import complete!
+                </p>
+                <div className="obsidian-import-modal__result-stats">
+                  <span>
+                    {obsidianImportResult.imported} documents imported
+                  </span>
+                  <span>{obsidianImportResult.folders} folders created</span>
+                  {obsidianImportResult.skipped > 0 && (
+                    <span>{obsidianImportResult.skipped} files skipped</span>
+                  )}
+                </div>
+                <button
+                  className="obsidian-import-modal__done-btn"
+                  onClick={() => {
+                    setObsidianImportOpen(false);
+                    setObsidianImportResult(null);
+                  }}
+                >
+                  Done
+                </button>
+              </div>
+            ) : (
+              <label
+                className={`obsidian-import-modal__dropzone${obsidianImporting ? " obsidian-import-modal__dropzone--loading" : ""}`}
+              >
+                <input
+                  type="file"
+                  accept=".zip"
+                  style={{ display: "none" }}
+                  onChange={handleObsidianImport}
+                  disabled={obsidianImporting}
+                />
+                {obsidianImporting ? (
+                  <>
+                    <span className="obsidian-import-modal__spinner" />
+                    <span>Importing vault...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg
+                      width="32"
+                      height="32"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="17 8 12 3 7 8" />
+                      <line x1="12" y1="3" x2="12" y2="15" />
+                    </svg>
+                    <span>Click to select your vault .zip file</span>
+                    <span className="obsidian-import-modal__hint">
+                      Max 50 MB
+                    </span>
+                  </>
+                )}
+              </label>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
