@@ -228,20 +228,20 @@ export function CalendarView({
 
   const todayKey = dateKey(today);
 
-  const renderDayCell = (date: Date, inMonth = true) => {
+  const renderDayCell = (
+    date: Date,
+    inMonth = true,
+    cellKey?: string | number,
+  ) => {
     const key = dateKey(date);
     const isToday = key === todayKey;
     const cellDocs = docsByDate.get(key) || [];
     const dailyNote = dailyNotesByDate.get(key);
-    const totalItems = (dailyNote ? 1 : 0) + cellDocs.length;
-    const maxShow = isMobile ? 6 : 3;
-    const docsToShow = dailyNote
-      ? cellDocs.slice(0, maxShow - 1)
-      : cellDocs.slice(0, maxShow);
-    const overflow = totalItems - maxShow;
+    const docsToShow = cellDocs;
 
     return (
       <div
+        key={cellKey}
         className={`calendar-view__cell${!inMonth ? " calendar-view__cell--outside" : ""}${isToday ? " calendar-view__cell--today" : ""}`}
       >
         <span
@@ -287,9 +287,6 @@ export function CalendarView({
               <span className="calendar-view__doc-name">{doc.name}</span>
             </button>
           ))}
-          {overflow > 0 && (
-            <span className="calendar-view__more">+{overflow} more</span>
-          )}
         </div>
       </div>
     );
@@ -361,9 +358,7 @@ export function CalendarView({
               {DAY_LABELS[d.getDay()]}
             </div>
           ))}
-          {mobileDays.map((d) => (
-            <div key={`cell-${dateKey(d)}`}>{renderDayCell(d)}</div>
-          ))}
+          {mobileDays.map((d) => renderDayCell(d, true, `cell-${dateKey(d)}`))}
         </div>
       </div>
     );
@@ -430,9 +425,9 @@ export function CalendarView({
           </div>
         ))}
 
-        {calendarDays.map((cell, i) => (
-          <div key={i}>{renderDayCell(cell.date, cell.inMonth)}</div>
-        ))}
+        {calendarDays.map((cell, i) =>
+          renderDayCell(cell.date, cell.inMonth, i),
+        )}
       </div>
     </div>
   );

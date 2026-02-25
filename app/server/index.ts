@@ -1894,9 +1894,25 @@ app.post("/api/templates/from-doc/:documentId", async (req, res) => {
 
 const DAILY_NOTE_PREFIX = "daily-";
 const DAILY_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const DAILY_FOLDER_ID = "folder-daily";
+const DAILY_FOLDER_NAME = "Daily";
 
 function dailyNoteId(date: string) {
   return `${DAILY_NOTE_PREFIX}${date}`;
+}
+
+async function ensureDailyFolder(): Promise<string> {
+  const folders = await loadFolders();
+  if (!folders.some((f) => f.id === DAILY_FOLDER_ID)) {
+    folders.push({
+      id: DAILY_FOLDER_ID,
+      name: DAILY_FOLDER_NAME,
+      parentId: null,
+      createdAt: new Date().toISOString(),
+    });
+    await saveFolders(folders);
+  }
+  return DAILY_FOLDER_ID;
 }
 
 function dailyNoteTemplate(date: string) {
@@ -1923,10 +1939,11 @@ app.get("/api/daily-note/:date", async (req, res) => {
     const exists = await storage.existsDocument(docId);
 
     if (!exists) {
+      const folderId = await ensureDailyFolder();
       const content = dailyNoteTemplate(date);
       await storage.saveDocument(docId, { content });
       await storage.saveDocMeta(docId, {
-        folderId: null,
+        folderId,
         name: date,
         type: "markdown",
         createdAt: new Date().toISOString(),
