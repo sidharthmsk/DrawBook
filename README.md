@@ -24,7 +24,7 @@ A self-hosted workspace that brings multiple creative and productivity tools und
 - **Local storage** fallback — works out of the box with zero config
 - **Optional password protection**
 - **Docker-ready** with health checks and resource limits
-- **AI "Make Real"** — turn tldraw wireframes into working UI (requires OpenRouter API key)
+- **AI-powered features** — turn wireframes into working UI, chat with an AI assistant, get design suggestions, and describe canvas content (powered by Groq + Kimi K2)
 
 ## Quick Start
 
@@ -76,7 +76,7 @@ Copy `app/env.example` to `app/.env` and adjust:
 | `MINIO_REGION` | `us-east-1` | Bucket region |
 | `MINIO_PREFIX` | *(empty)* | Key prefix inside the bucket |
 | `CORS_ORIGINS` | *(open)* | Comma-separated allowed origins (e.g. `https://draw.example.com`) |
-| `OPENROUTER_API_KEY` | — | For the AI "Make Real" feature |
+| `GROQ_API_KEY` | — | For AI features: Make Real, chat assistant, suggestions (get key at [console.groq.com](https://console.groq.com)) |
 
 ## Storage Backends
 
@@ -95,7 +95,7 @@ drawbook/
 │   ├── server/
 │   │   ├── index.ts          # Express + WebSocket server
 │   │   ├── storage.ts        # Local & S3 storage adapters
-│   │   └── ai.ts             # AI UI generation (OpenRouter)
+│   │   └── ai.ts             # AI features (Groq + Kimi K2)
 │   ├── Dockerfile
 │   ├── env.example
 │   └── package.json
@@ -121,6 +121,10 @@ All endpoints are prefixed with `/api` and protected by `APP_PASSWORD` when set.
 | `GET/POST` | `/api/folders` | List / create folders |
 | `POST` | `/api/bulk/move` | Bulk move documents |
 | `POST` | `/api/bulk/delete` | Bulk delete documents |
+| `POST` | `/api/ai/generate-ui` | Generate UI prototype from wireframe descriptions |
+| `POST` | `/api/ai/chat` | Chat with AI assistant |
+| `POST` | `/api/ai/describe` | Describe canvas contents |
+| `POST` | `/api/ai/suggest` | Get smart suggestions for canvas |
 
 WebSocket endpoint: `ws://<host>/ws?doc=<documentId>`
 

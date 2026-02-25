@@ -26,7 +26,8 @@ type DocumentType =
   | "pdf"
   | "spreadsheet"
   | "kanban"
-  | "code";
+  | "code"
+  | "grid";
 
 interface DocumentItem {
   id: string;

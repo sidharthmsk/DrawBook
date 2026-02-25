@@ -1,4 +1,4 @@
-import type { Editor, TLShapePartial } from "tldraw";
+import { createShapeId, type Editor, type TLShapePartial } from "tldraw";
 import type { BlockNoteEditor } from "@blocknote/core";
 
 export type EditorType =
@@ -7,12 +7,14 @@ export type EditorType =
   | "tldraw"
   | "drawio"
   | "kanban"
-  | "spreadsheet";
+  | "spreadsheet"
+  | "grid"
+  | "code";
 
 export interface EditorAdapter {
   type: EditorType;
   getContext(): string;
-  applyContent(content: string): void;
+  applyContent(content: string): void | Promise<void>;
 }
 
 export function createTldrawAdapter(editor: Editor): EditorAdapter {
@@ -84,7 +86,7 @@ export function createTldrawAdapter(editor: Editor): EditorAdapter {
         }
 
         const shapes: TLShapePartial[] = shapeDescriptions.map((desc, i) => {
-          const id = `shape:ai-${Date.now()}-${i}` as TLShapePartial["id"];
+          const id = createShapeId(`ai-${Date.now()}-${i}`);
           const x = (desc.x || 0) + offsetX;
           const y = (desc.y || 0) + 100;
 
@@ -210,15 +212,60 @@ export function createExcalidrawAdapter(
           offsetY = 100;
         }
 
-        const prepared = newElements.map((el: any, i: number) => ({
-          ...el,
-          id: el.id || `ai-${Date.now()}-${i}`,
-          x: (el.x || 0) + offsetX,
-          y: (el.y || 0) + offsetY,
-          version: 1,
-          versionNonce: Math.floor(Math.random() * 1e9),
-          seed: Math.floor(Math.random() * 1e9),
-        }));
+        const prepared = newElements.map((el: any, i: number) => {
+          const base: Record<string, any> = {
+            angle: 0,
+            strokeColor: "#e8e5e0",
+            backgroundColor: "transparent",
+            fillStyle: "solid",
+            strokeWidth: 2,
+            roughness: 1,
+            opacity: 100,
+            groupIds: [],
+            roundness: { type: 3 },
+            boundElements: null,
+            updated: Date.now(),
+            link: null,
+            locked: false,
+            isDeleted: false,
+            ...el,
+            id: el.id || `ai-${Date.now()}-${i}`,
+            x: (el.x || 0) + offsetX,
+            y: (el.y || 0) + offsetY,
+            version: 1,
+            versionNonce: Math.floor(Math.random() * 1e9),
+            seed: Math.floor(Math.random() * 1e9),
+          };
+
+          if (base.type === "text") {
+            base.fontSize = base.fontSize || 20;
+            base.fontFamily = base.fontFamily || 1;
+            base.textAlign = base.textAlign || "left";
+            base.verticalAlign = base.verticalAlign || "top";
+            base.originalText = base.originalText || base.text || "";
+            base.text = base.text || "";
+            base.containerId = base.containerId || null;
+            base.lineHeight = base.lineHeight || 1.25;
+          }
+
+          if (base.type === "arrow" || base.type === "line") {
+            if (!base.points || !Array.isArray(base.points)) {
+              base.points = [
+                [0, 0],
+                [base.width || 100, base.height || 0],
+              ];
+            }
+            base.lastCommittedPoint = null;
+            base.startBinding = base.startBinding || null;
+            base.endBinding = base.endBinding || null;
+            base.startArrowhead =
+              base.type === "arrow" ? base.startArrowhead || null : null;
+            base.endArrowhead =
+              base.type === "arrow" ? (base.endArrowhead ?? "arrow") : null;
+          }
+
+          return base;
+        });
 
         updateScene({ elements: [...existing, ...prepared] });
       } catch (e) {
@@ -271,9 +318,24 @@ export function createMarkdownAdapter(editorRef: {
   };
 }
 
-export function createDrawioAdapter(xmlRef: {
-  current: string;
-}): EditorAdapter {
+function mergeDrawioXml(existingXml: string, newCells: string): string {
+  if (!existingXml) {
+    return `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>${newCells}</root></mxGraphModel>`;
+  }
+
+  const closingRoot = "</root>";
+  const idx = existingXml.lastIndexOf(closingRoot);
+  if (idx === -1) {
+    return `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>${newCells}</root></mxGraphModel>`;
+  }
+
+  return existingXml.slice(0, idx) + newCells + existingXml.slice(idx);
+}
+
+export function createDrawioAdapter(
+  xmlRef: { current: string },
+  iframeRef: { current: HTMLIFrameElement | null },
+): EditorAdapter {
   return {
     type: "drawio",
     getContext() {
@@ -281,12 +343,9 @@ export function createDrawioAdapter(xmlRef: {
       if (!xml) return "The diagram is empty.";
 
       try {
-        // Parse draw.io XML to extract cell information
-        // Draw.io XML has <mxCell> elements with value (label), style, source, target attributes
         const cells: string[] = [];
         const connections: string[] = [];
 
-        // Match mxCell elements with attributes
         const cellRegex =
           /<mxCell\s+([^>]*?)\/?>|<mxCell\s+([^>]*?)>[\s\S]*?<\/mxCell>/g;
         let match;
@@ -321,15 +380,12 @@ export function createDrawioAdapter(xmlRef: {
           const source = getSource(attrs);
           const target = getTarget(attrs);
 
-          // Skip root and layer cells (id 0 and 1)
           if (id === "0" || id === "1") continue;
 
           if (source && target) {
-            // This is an edge/connection
             const label = value ? ` labeled "${value}"` : "";
             connections.push(`${source} -> ${target}${label}`);
           } else if (value) {
-            // This is a vertex/shape with a label
             let shapeType = "shape";
             if (style) {
               if (style.includes("ellipse")) shapeType = "ellipse";
@@ -363,10 +419,20 @@ export function createDrawioAdapter(xmlRef: {
         return "Unable to read diagram content.";
       }
     },
-    applyContent(_content: string) {
-      // draw.io runs in an iframe with postMessage protocol.
-      // Writing back requires postMessage with action:'load' and merged XML,
-      // which is complex and fragile. For now, AI responses are text-only.
+    applyContent(content: string) {
+      try {
+        const iframe = iframeRef.current;
+        if (!iframe?.contentWindow) return;
+
+        const merged = mergeDrawioXml(xmlRef.current, content);
+        xmlRef.current = merged;
+        iframe.contentWindow.postMessage(
+          JSON.stringify({ action: "load", xml: merged, autosave: 1 }),
+          "*",
+        );
+      } catch (e) {
+        console.error("[AI] Failed to apply draw.io content:", e);
+      }
     },
   };
 }
@@ -523,6 +589,87 @@ export function createSpreadsheetAdapter(
         }
       } catch {
         // ignore invalid JSON
+      }
+    },
+  };
+}
+
+interface GridTableSnapshot {
+  columns: Array<{ id: string; name: string; type: string }>;
+  rows: Array<{ id: string; cells: Record<string, unknown> }>;
+}
+
+export function createGridAdapter(
+  dataRef: { current: GridTableSnapshot | undefined },
+  addRows?: (rows: Array<Record<string, unknown>>) => void,
+): EditorAdapter {
+  return {
+    type: "grid",
+    getContext() {
+      const data = dataRef.current;
+      if (!data || data.columns.length === 0) return "The table is empty.";
+
+      const header = data.columns.map((c) => c.name).join(" | ");
+      const separator = data.columns.map(() => "---").join(" | ");
+      const bodyRows = data.rows.slice(0, 50).map((row) =>
+        data.columns
+          .map((col) => {
+            const val = row.cells[col.id];
+            if (val === null || val === undefined) return "";
+            if (Array.isArray(val)) return val.join(", ");
+            return String(val);
+          })
+          .join(" | "),
+      );
+
+      const table = [header, separator, ...bodyRows].join("\n");
+      const summary = `Table with ${data.columns.length} column(s) and ${data.rows.length} row(s):\n\n${table}`;
+      if (data.rows.length > 50) {
+        return `${summary}\n... and ${data.rows.length - 50} more rows`;
+      }
+      return summary;
+    },
+    applyContent(content: string) {
+      if (!addRows) return;
+      try {
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed)) {
+          addRows(parsed);
+        }
+      } catch {
+        console.warn("Failed to parse grid AI content");
+      }
+    },
+  };
+}
+
+export function createCodeAdapter(
+  contentRef: { current: string },
+  languageRef: { current: string },
+  setContent: (code: string) => void,
+): EditorAdapter {
+  return {
+    type: "code",
+    getContext() {
+      const code = contentRef.current;
+      const lang = languageRef.current;
+      if (!code.trim()) return `Empty ${lang} file.`;
+      const lines = code.split("\n");
+      const preview = lines.slice(0, 100).join("\n");
+      const summary = `${lang} file (${lines.length} lines):\n\`\`\`${lang}\n${preview}\n\`\`\``;
+      if (lines.length > 100) {
+        return `${summary}\n... and ${lines.length - 100} more lines`;
+      }
+      return summary;
+    },
+    applyContent(content: string) {
+      const fenced = content.match(/```[\w]*\n([\s\S]*?)```/);
+      const code = fenced ? fenced[1] : content;
+      const current = contentRef.current;
+      if (current.trim()) {
+        setContent(current + "\n\n" + code);
+      } else {
+        setContent(code);
       }
     },
   };

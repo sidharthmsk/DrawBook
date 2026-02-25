@@ -22,7 +22,7 @@ export function DrawioEditor({ documentId }: DrawioEditorProps) {
   const [adapter, setAdapter] = useState<EditorAdapter | null>(null);
 
   useEffect(() => {
-    setAdapter(createDrawioAdapter(xmlRef));
+    setAdapter(createDrawioAdapter(xmlRef, iframeRef));
   }, []);
 
   useEffect(() => {

@@ -1,0 +1,43 @@
+appId: com.drawbook.app
+productName: Drawbook
+directories:
+  output: release
+
+files:
+  - "**/*"
+  - "!src"
+  - "!server"
+  - "!electron"
+  - "!data"
+  - "!public"
+  - "!*.ts"
+  - "!*.html"
+  - "!Dockerfile"
+  - "!env.example"
+  - "!tsconfig*"
+  - "!electron-builder.yml"
+  - "!release"
+  - "!vite.config.*"
+
+mac:
+  category: public.app-category.productivity
+  icon: build/icon.icns
+  target:
+    - target: dir
+      arch:
+        - arm64
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+linux:
+  icon: build/icon.png
+
+asar: true
+
+extraMetadata:
+  main: dist/electron/main.js

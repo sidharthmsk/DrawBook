@@ -1,17 +1,22 @@
 import { useState, useCallback, useRef } from "react";
-import { BaseBoxShapeUtil, HTMLContainer, TLBaseShape, T } from "tldraw";
+import { BaseBoxShapeUtil, HTMLContainer, TLShape, T } from "tldraw";
 
-export type PreviewShape = TLBaseShape<
-  "preview",
-  {
-    html: string;
-    w: number;
-    h: number;
+const PREVIEW_SHAPE_TYPE = "preview" as const;
+
+declare module "tldraw" {
+  export interface TLGlobalShapePropsMap {
+    [PREVIEW_SHAPE_TYPE]: {
+      html: string;
+      w: number;
+      h: number;
+    };
   }
->;
+}
+
+export type PreviewShape = TLShape<typeof PREVIEW_SHAPE_TYPE>;
 
 export class PreviewShapeUtil extends BaseBoxShapeUtil<PreviewShape> {
-  static override type = "preview" as const;
+  static override type = PREVIEW_SHAPE_TYPE;
 
   static override props = {
     html: T.string,

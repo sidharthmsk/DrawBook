@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EditorShell } from "./EditorShell";
+import { createCodeAdapter, type EditorAdapter } from "./ai/EditorAdapter";
 import CodeMirror from "@uiw/react-codemirror";
 import { createTheme } from "@uiw/codemirror-themes";
 import { javascript } from "@codemirror/lang-javascript";
@@ -81,6 +82,7 @@ export function CodeEditor({ documentId }: CodeEditorProps) {
     "saved",
   );
   const [loaded, setLoaded] = useState(false);
+  const [adapter, setAdapter] = useState<EditorAdapter | null>(null);
   const saveTimeout = useRef<NodeJS.Timeout | null>(null);
   const contentRef = useRef(content);
   const languageRef = useRef(language);
@@ -158,6 +160,18 @@ export function CodeEditor({ documentId }: CodeEditorProps) {
     [debouncedSave],
   );
 
+  const setContentFromAI = useCallback(
+    (code: string) => {
+      setContent(code);
+      debouncedSave(code, languageRef.current);
+    },
+    [debouncedSave],
+  );
+
+  useEffect(() => {
+    setAdapter(createCodeAdapter(contentRef, languageRef, setContentFromAI));
+  }, [setContentFromAI]);
+
   const langExtension = useMemo(
     () => getLanguageExtension(language),
     [language],
@@ -172,7 +186,11 @@ export function CodeEditor({ documentId }: CodeEditorProps) {
   }
 
   return (
-    <EditorShell documentId={documentId} adapter={null} saveStatus={saveStatus}>
+    <EditorShell
+      documentId={documentId}
+      adapter={adapter}
+      saveStatus={saveStatus}
+    >
       <div className="code-editor">
         <div className="code-editor__toolbar">
           <select

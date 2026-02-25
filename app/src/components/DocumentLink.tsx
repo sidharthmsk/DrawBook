@@ -1,5 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
+let _linkingEnabled = false;
+export function setLinkingEnabled(enabled: boolean) {
+  _linkingEnabled = enabled;
+}
+export function isLinkingEnabled() {
+  return _linkingEnabled;
+}
+
 interface ResolvedDoc {
   id: string;
   name: string;
@@ -62,18 +70,36 @@ export function DocumentLink({ name }: { name: string }) {
   );
 }
 
-const LINK_RE = /\[\[([^\]]+)\]\]/g;
-
 export function renderWithLinks(text: string): (string | JSX.Element)[] {
+  const COMBINED_RE = /\[\[([^\]]+)\]\]|https?:\/\/[^\s)>\]]+/g;
   const parts: (string | JSX.Element)[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
-  while ((match = LINK_RE.exec(text)) !== null) {
+  while ((match = COMBINED_RE.exec(text)) !== null) {
     if (match.index > lastIndex) {
       parts.push(text.slice(lastIndex, match.index));
     }
-    parts.push(<DocumentLink key={match.index} name={match[1]} />);
+    if (match[1] !== undefined) {
+      if (_linkingEnabled) {
+        parts.push(<DocumentLink key={match.index} name={match[1]} />);
+      } else {
+        parts.push(text.slice(match.index, match.index + match[0].length));
+      }
+    } else {
+      const url = match[0];
+      parts.push(
+        <a
+          key={match.index}
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="doc-link doc-link--url"
+        >
+          {url}
+        </a>,
+      );
+    }
     lastIndex = match.index + match[0].length;
   }
 

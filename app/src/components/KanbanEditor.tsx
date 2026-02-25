@@ -5,12 +5,7 @@ import {
   type KanbanSnapshot as KanbanSnapshotType,
   type EditorAdapter,
 } from "./ai/EditorAdapter";
-import {
-  renderWithLinks,
-  DocumentPicker,
-  useInlineLinkSuggest,
-  InlineSuggestDropdown,
-} from "./DocumentLink";
+import { renderWithLinks } from "./DocumentLink";
 import {
   DndContext,
   DragOverlay,
@@ -136,26 +131,17 @@ function CardDetailModal({
     Array<{ id: string; text: string; createdAt: string }>
   >(card.comments || []);
   const [newComment, setNewComment] = useState("");
-  const [docPickerOpen, setDocPickerOpen] = useState(false);
   const descRef = useRef<HTMLTextAreaElement>(null);
-
-  const inlineSuggest = useInlineLinkSuggest(
-    descRef,
-    description,
-    setDescription,
-  );
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (inlineSuggest.open) return; // handled by inline suggest
-        if (docPickerOpen) setDocPickerOpen(false);
-        else onClose();
+        onClose();
       }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [onClose, docPickerOpen, inlineSuggest.open]);
+  }, [onClose]);
 
   const save = () => {
     const updates: Partial<KanbanCard> = {};
@@ -302,70 +288,19 @@ function CardDetailModal({
           </>
         )}
 
-        <div className="kanban-detail__label-row">
-          <label className="kanban-detail__label">Description</label>
-          <button
-            className="kanban-detail__link-btn"
-            onClick={() => setDocPickerOpen(true)}
-            title="Insert document link [[...]]"
-          >
-            🔗 Link
-          </button>
-        </div>
+        <label className="kanban-detail__label">Description</label>
         <textarea
           ref={descRef}
           className="kanban-detail__desc"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           onBlur={save}
-          placeholder="Add a description... Type [[ to link a document"
+          placeholder="Add a description..."
           rows={4}
-          onKeyUp={inlineSuggest.suggestProps.onKeyUp}
-          onClick={inlineSuggest.suggestProps.onClick}
         />
-        {inlineSuggest.open && (
-          <InlineSuggestDropdown
-            query={inlineSuggest.query}
-            position={inlineSuggest.dropdownPos}
-            onSelect={inlineSuggest.handleSelect}
-            onClose={inlineSuggest.handleClose}
-          />
-        )}
         {description && /\[\[.+?\]\]/.test(description) && (
           <div className="kanban-detail__link-preview">
             {renderWithLinks(description)}
-          </div>
-        )}
-        {docPickerOpen && (
-          <div
-            className="doc-picker-overlay"
-            onClick={() => setDocPickerOpen(false)}
-          >
-            <div onClick={(e) => e.stopPropagation()}>
-              <DocumentPicker
-                onSelect={(doc) => {
-                  setDocPickerOpen(false);
-                  const ta = descRef.current;
-                  const link = `[[${doc.name}]]`;
-                  if (ta) {
-                    const start = ta.selectionStart;
-                    const end = ta.selectionEnd;
-                    const next =
-                      description.slice(0, start) +
-                      link +
-                      description.slice(end);
-                    setDescription(next);
-                    setTimeout(() => {
-                      ta.focus();
-                      ta.selectionStart = ta.selectionEnd = start + link.length;
-                    }, 0);
-                  } else {
-                    setDescription(description + link);
-                  }
-                }}
-                onClose={() => setDocPickerOpen(false)}
-              />
-            </div>
           </div>
         )}
 
@@ -483,14 +418,26 @@ function SortableCard({
   onUpdate,
   onDelete,
   onOpenDetail,
+  autoEdit,
+  onAutoEditDone,
 }: {
   card: KanbanCard;
   onUpdate: (id: string, updates: Partial<KanbanCard>) => void;
   onDelete: (id: string) => void;
   onOpenDetail: (card: KanbanCard) => void;
+  autoEdit?: boolean;
+  onAutoEditDone?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(card.title);
+
+  useEffect(() => {
+    if (autoEdit) {
+      setEditing(true);
+      setTitle("");
+      onAutoEditDone?.();
+    }
+  }, [autoEdit, onAutoEditDone]);
   const {
     attributes,
     listeners,
@@ -660,6 +607,8 @@ function SortableColumn({
   onDeleteColumn,
   onOpenDetail,
   onSetWipLimit,
+  lastCreatedCardId,
+  onAutoEditDone,
 }: {
   column: KanbanColumn;
   cards: KanbanCard[];
@@ -670,6 +619,8 @@ function SortableColumn({
   onDeleteColumn: (id: string) => void;
   onOpenDetail: (card: KanbanCard) => void;
   onSetWipLimit: (id: string, limit: number | undefined) => void;
+  lastCreatedCardId?: string | null;
+  onAutoEditDone?: () => void;
 }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState(column.title);
@@ -803,6 +754,8 @@ function SortableColumn({
               onUpdate={onUpdateCard}
               onDelete={onDeleteCard}
               onOpenDetail={onOpenDetail}
+              autoEdit={card.id === lastCreatedCardId}
+              onAutoEditDone={onAutoEditDone}
             />
           ))}
         </SortableContext>
@@ -822,6 +775,9 @@ export function KanbanEditor({ documentId }: KanbanEditorProps) {
   );
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [detailCard, setDetailCard] = useState<KanbanCard | null>(null);
+  const [lastCreatedCardId, setLastCreatedCardId] = useState<string | null>(
+    null,
+  );
   const [docName, setDocName] = useState("board");
   const [mobileActiveColIdx, setMobileActiveColIdx] = useState(0);
   const [colContextMenu, setColContextMenu] = useState<{
@@ -957,6 +913,7 @@ export function KanbanEditor({ documentId }: KanbanEditorProps) {
   const addCard = useCallback(
     (columnId: string) => {
       const cardId = `card-${Date.now()}`;
+      setLastCreatedCardId(cardId);
       updateData((prev) => ({
         ...prev,
         cards: [
@@ -972,6 +929,10 @@ export function KanbanEditor({ documentId }: KanbanEditorProps) {
     },
     [updateData],
   );
+
+  const clearLastCreatedCard = useCallback(() => {
+    setLastCreatedCardId(null);
+  }, []);
 
   const updateCard = useCallback(
     (id: string, updates: Partial<KanbanCard>) => {
@@ -1367,6 +1328,8 @@ export function KanbanEditor({ documentId }: KanbanEditorProps) {
                       onUpdate={updateCard}
                       onDelete={deleteCard}
                       onOpenDetail={setDetailCard}
+                      autoEdit={card.id === lastCreatedCardId}
+                      onAutoEditDone={clearLastCreatedCard}
                     />
                   ))}
                 </SortableContext>
@@ -1408,6 +1371,8 @@ export function KanbanEditor({ documentId }: KanbanEditorProps) {
                   onDeleteColumn={deleteColumn}
                   onOpenDetail={setDetailCard}
                   onSetWipLimit={setWipLimit}
+                  lastCreatedCardId={lastCreatedCardId}
+                  onAutoEditDone={clearLastCreatedCard}
                 />
               ))}
             </SortableContext>
