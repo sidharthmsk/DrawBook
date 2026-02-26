@@ -1,0 +1,123 @@
+{
+  "project": "Drawbook",
+  "branchName": "ralph/inline-suggest-and-flowchart",
+  "description": "Auto-suggest when typing [[ in editors, and generate flowcharts from documents in Excalidraw",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Inline auto-suggest component for [[ trigger",
+      "description": "As a user, I want a dropdown to appear when I type [[ so I can quickly link documents.",
+      "acceptanceCriteria": [
+        "useInlineLinkSuggest hook detects [[ in a textarea and tracks the partial query after [[",
+        "InlineSuggestDropdown renders a fixed-position dropdown near the cursor",
+        "Dropdown shows up to 8 matching documents filtered by the partial query",
+        "Keyboard navigation works: ArrowUp, ArrowDown to move, Enter to select, Escape to close",
+        "On select, the [[partial text is replaced with [[DocName]] in the textarea",
+        "Cursor is positioned after ]] after insertion",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Components in app/src/components/DocumentLink.tsx"
+    },
+    {
+      "id": "US-002",
+      "title": "Inline [[ auto-suggest in Kanban description textarea",
+      "description": "As a user, I want auto-suggest when typing [[ in a Kanban card description.",
+      "acceptanceCriteria": [
+        "CardDetailModal integrates useInlineLinkSuggest with the description textarea",
+        "Typing [[ in the description textarea triggers the InlineSuggestDropdown",
+        "Selecting a document inserts [[DocName]] at the cursor and closes the dropdown",
+        "Escape from inline suggest does not close the entire modal",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "In KanbanEditor.tsx CardDetailModal"
+    },
+    {
+      "id": "US-003",
+      "title": "Inline [[ auto-suggest in Markdown BlockNote editor",
+      "description": "As a user, I want auto-suggest when typing [[ in the markdown editor.",
+      "acceptanceCriteria": [
+        "MarkdownEditor detects [[ being typed by inspecting DOM selection in handleChangeWithToc",
+        "InlineSuggestDropdown appears positioned near the text cursor in the contenteditable",
+        "Selecting a document replaces [[partial with [[DocName]] via DOM manipulation",
+        "A save is triggered after link insertion",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "In MarkdownEditor.tsx using window.getSelection() to detect [[ context"
+    },
+    {
+      "id": "US-004",
+      "title": "Server endpoint to extract document structure",
+      "description": "As a developer, I need structured data from documents for flowchart generation.",
+      "acceptanceCriteria": [
+        "POST /api/extract-structure accepts { documentIds: string[] }",
+        "For markdown docs: extracts headings as nodes with bullet points as children",
+        "For kanban docs: extracts columns as nodes with card titles as children",
+        "For other docs: extracts document name with summary text",
+        "Returns { documents: [{ id, name, type, nodes }] }",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Endpoint in app/server/index.ts"
+    },
+    {
+      "id": "US-005",
+      "title": "Flowchart generator from document structure",
+      "description": "As a developer, I need a utility that converts document structure into Excalidraw elements.",
+      "acceptanceCriteria": [
+        "generateFlowchart(documentIds) returns an array of Excalidraw elements",
+        "Each document becomes a column with a colored title box (color by type)",
+        "Document sections become connected rectangular nodes with arrows",
+        "Section children become smaller boxes connected to their parent",
+        "Multiple documents have arrows connecting their title boxes",
+        "Elements have proper IDs, bindings, and Excalidraw-compatible properties",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "File: app/src/components/FlowchartGenerator.ts"
+    },
+    {
+      "id": "US-006",
+      "title": "Excalidraw flowchart generation UI",
+      "description": "As a user, I want to select documents and generate a flowchart in my Excalidraw canvas.",
+      "acceptanceCriteria": [
+        "ExcalidrawEditor topbar has a 'Flowchart' button",
+        "Clicking it opens a panel listing all other documents with checkboxes",
+        "Panel shows document name and type for each item",
+        "A 'Generate' button creates the flowchart from selected documents",
+        "Generated elements are added to the existing canvas (not replacing)",
+        "Canvas scrolls to show the generated flowchart",
+        "Panel closes after generation",
+        "Button is disabled when no documents are selected",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "In ExcalidrawEditor.tsx with FlowchartGenerator.ts"
+    },
+    {
+      "id": "US-007",
+      "title": "CSS for inline suggest and flowchart panel",
+      "description": "As a user, I want the inline suggest and flowchart UI to be properly styled.",
+      "acceptanceCriteria": [
+        "inline-suggest: dark card with header, scrollable list, active highlight",
+        "flowchart-panel: absolute positioned card, checkbox list, generate button with disabled state",
+        "All components follow the existing dark theme",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Styles in app/src/index.css"
+    }
+  ]
+}

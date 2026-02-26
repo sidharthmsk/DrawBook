@@ -83,6 +83,14 @@ export interface FleetingNote {
   documentId?: string;
 }
 
+export interface Task {
+  id: string;
+  text: string;
+  done: boolean;
+  documentId: string;
+  createdAt: string;
+}
+
 export interface StorageAdapter {
   init(): Promise<void>;
 
@@ -94,6 +102,9 @@ export interface StorageAdapter {
 
   loadFleetingNotes(): Promise<FleetingNote[]>;
   saveFleetingNotes(notes: FleetingNote[]): Promise<void>;
+
+  loadTasks(): Promise<Task[]>;
+  saveTasks(tasks: Task[]): Promise<void>;
 
   loadDocMeta(documentId: string): Promise<DocMetadata>;
   saveDocMeta(documentId: string, meta: DocMetadata): Promise<void>;
@@ -128,6 +139,9 @@ class LocalStorageAdapter implements StorageAdapter {
   }
   private fleetingFilePath() {
     return path.join(this.dataDir, "_fleeting.json");
+  }
+  private tasksFilePath() {
+    return path.join(this.dataDir, "_tasks.json");
   }
   private docFilePath(documentId: string) {
     return path.join(this.dataDir, `${sanitizeDocumentId(documentId)}.json`);
@@ -265,6 +279,23 @@ class LocalStorageAdapter implements StorageAdapter {
     await fs.writeFile(
       this.fleetingFilePath(),
       JSON.stringify(notes, null, 2),
+      "utf-8",
+    );
+  }
+
+  async loadTasks(): Promise<Task[]> {
+    try {
+      const content = await fs.readFile(this.tasksFilePath(), "utf-8");
+      return JSON.parse(content) as Task[];
+    } catch {
+      return [];
+    }
+  }
+
+  async saveTasks(tasks: Task[]) {
+    await fs.writeFile(
+      this.tasksFilePath(),
+      JSON.stringify(tasks, null, 2),
       "utf-8",
     );
   }
@@ -467,6 +498,9 @@ class MinioStorageAdapter implements StorageAdapter {
   private fleetingKey() {
     return this.keyFor("meta/fleeting.json");
   }
+  private tasksKey() {
+    return this.keyFor("meta/tasks.json");
+  }
   private legacyMetadataKey() {
     return this.keyFor("meta/metadata.json");
   }
@@ -639,6 +673,14 @@ class MinioStorageAdapter implements StorageAdapter {
 
   async saveFleetingNotes(notes: FleetingNote[]) {
     await this.putJson(this.fleetingKey(), notes);
+  }
+
+  async loadTasks(): Promise<Task[]> {
+    return this.getJson<Task[]>(this.tasksKey(), []);
+  }
+
+  async saveTasks(tasks: Task[]) {
+    await this.putJson(this.tasksKey(), tasks);
   }
 
   async loadDocMeta(documentId: string): Promise<DocMetadata> {
@@ -843,6 +885,13 @@ class CachedStorageAdapter implements StorageAdapter {
     return this.inner.saveFleetingNotes(notes);
   }
 
+  async loadTasks() {
+    return this.inner.loadTasks();
+  }
+  async saveTasks(tasks: Task[]) {
+    return this.inner.saveTasks(tasks);
+  }
+
   async loadDocMeta(documentId: string): Promise<DocMetadata> {
     const cached = this.metaCache.get(documentId);
     if (cached && Date.now() - cached.time < CachedStorageAdapter.META_TTL) {
@@ -970,7 +1019,7 @@ function resolveMinioEndpoint() {
   return `${useSsl ? "https" : "http"}://${host}:${port}`;
 }
 
-export function createStorageAdapter(): StorageAdapter {
+export function createStorageAdapter(dataDirOverride?: string): StorageAdapter {
   const backendOverride = process.env.STORAGE_BACKEND?.toLowerCase();
   const hasMinioKeys =
     Boolean(process.env.MINIO_ACCESS_KEY) &&
@@ -979,7 +1028,10 @@ export function createStorageAdapter(): StorageAdapter {
 
   let inner: StorageAdapter;
 
-  if (backendOverride === "minio" || (!backendOverride && hasMinioKeys)) {
+  if (
+    !dataDirOverride &&
+    (backendOverride === "minio" || (!backendOverride && hasMinioKeys))
+  ) {
     inner = new MinioStorageAdapter({
       endpoint: resolveMinioEndpoint(),
       accessKeyId: getRequiredEnv("MINIO_ACCESS_KEY"),
@@ -988,10 +1040,17 @@ export function createStorageAdapter(): StorageAdapter {
       region: process.env.MINIO_REGION || "us-east-1",
       prefix: process.env.MINIO_PREFIX,
     });
-  } else if (backendOverride && backendOverride !== "local") {
+  } else if (
+    !dataDirOverride &&
+    backendOverride &&
+    backendOverride !== "local"
+  ) {
     throw new Error(`Unsupported STORAGE_BACKEND: ${backendOverride}`);
   } else {
-    const dataDir = process.env.DATA_DIR || path.join(process.cwd(), "data");
+    const dataDir =
+      dataDirOverride ||
+      process.env.DATA_DIR ||
+      path.join(process.cwd(), "data");
     inner = new LocalStorageAdapter(dataDir);
   }
 

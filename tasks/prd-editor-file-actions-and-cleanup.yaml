@@ -1,0 +1,112 @@
+title: "PRD: In-Editor File Actions & Code Cleanup"
+
+introduction: |
+  Add delete and move-to-folder actions accessible from within any open editor,
+  so users don't have to navigate back to the dashboard to manage documents.
+  Additionally, perform a comprehensive code cleanup to remove unused dependencies,
+  dead code, and consolidate duplicate logic across the codebase.
+
+goals:
+  - Allow users to delete or move the current document without leaving the editor
+  - Reduce bundle size and improve maintainability by removing unused code and dependencies
+  - Consolidate duplicate patterns in server and client code
+  - Simplify the codebase for easier future development
+
+user_stories:
+  - id: US-001
+    title: Delete document from inside the editor
+    description: As a user, I want to delete the document I'm currently editing so that I can manage files without navigating back to the dashboard.
+    acceptance_criteria:
+      - A delete action is accessible from the EditorShell toolbar (e.g. in a "..." menu or action bar)
+      - Clicking delete shows a confirmation dialog ("Are you sure you want to delete [document name]?")
+      - On confirm, the document is soft-deleted (moved to trash via existing DELETE /api/delete/:documentId)
+      - After deletion, the user is navigated back to the dashboard
+      - A toast/notification confirms the document was moved to trash
+      - Typecheck/lint passes
+
+  - id: US-002
+    title: Move document to a different folder from inside the editor
+    description: As a user, I want to move the current document to a different folder without leaving the editor so I can organize as I work.
+    acceptance_criteria:
+      - A "Move to..." action is accessible from the EditorShell toolbar
+      - Clicking it opens a folder picker dialog showing the folder hierarchy
+      - The current folder is indicated in the picker
+      - Selecting a folder and confirming moves the document (via existing POST /api/documents/:documentId/move)
+      - A toast/notification confirms the move and shows the destination folder name
+      - The editor stays open on the same document after the move
+      - Typecheck/lint passes
+
+  - id: US-003
+    title: Remove unused npm dependencies
+    description: As a developer, I want unused npm packages removed so the install is faster and the bundle is smaller.
+    acceptance_criteria:
+      - Run dependency analysis (depcheck or manual audit) to identify unused packages
+      - Remove all confirmed unused packages from package.json
+      - Verify the app still builds successfully
+      - Verify the Electron build still works
+      - Typecheck/lint passes
+
+  - id: US-004
+    title: Remove dead imports, unused code, and unused components
+    description: As a developer, I want dead code removed so the codebase is easier to navigate and maintain.
+    acceptance_criteria:
+      - Identify and remove unused imports across all source files
+      - Identify and remove unused exported functions, components, and types
+      - Identify and remove unused CSS classes/styles
+      - No functional changes to the app — all existing features still work
+      - Typecheck/lint passes
+
+  - id: US-005
+    title: Consolidate duplicate logic and simplify server code
+    description: As a developer, I want duplicated patterns consolidated so there's one clear way to do things.
+    acceptance_criteria:
+      - Identify repeated patterns in server/index.ts (similar route handlers, error handling, response formatting)
+      - Extract shared logic into helper functions or middleware
+      - Identify duplicated client-side patterns (API call wrappers, state management) and consolidate
+      - Reduce server/index.ts from ~2143 lines by extracting routes into separate modules
+      - No functional changes — all API endpoints behave identically
+      - Typecheck/lint passes
+
+functional_requirements:
+  - FR-1: EditorShell toolbar must include a dropdown/menu with "Delete" and "Move to..." actions for all editor types
+  - FR-2: Delete action must show a confirmation dialog before proceeding
+  - FR-3: Delete action must use the existing soft-delete API endpoint (DELETE /api/delete/:documentId)
+  - FR-4: Move action must open a folder picker showing the full folder hierarchy
+  - FR-5: Move action must use the existing move API endpoint (POST /api/documents/:documentId/move)
+  - FR-6: After delete, navigate to dashboard. After move, stay on the document.
+  - FR-7: Both actions must show success/error feedback via toast notifications
+  - FR-8: All unused npm dependencies must be removed from package.json
+  - FR-9: All dead imports, unused exports, and unreachable code must be removed
+  - FR-10: Server routes must be extracted from the monolithic server/index.ts into logical modules
+
+non_goals:
+  - No new offline features (local LLM, offline indicators, etc.)
+  - No changes to existing delete/move API behavior — only adding UI access points
+  - No adding new dependencies for the cleanup (use existing tooling)
+  - No redesigning the EditorShell toolbar — add actions within the existing UI pattern
+  - No undo for delete within the editor (existing trash/restore flow covers this)
+
+design_considerations:
+  - Reuse existing folder tree component from Dashboard for the folder picker dialog
+  - Place file actions in a "..." overflow menu or similar pattern already used in EditorShell
+  - Confirmation dialog should match existing app dialog styling
+  - Toast notifications should use an existing toast/notification pattern if one exists, or add a minimal one
+
+technical_considerations:
+  - EditorShell (components/EditorShell.tsx) is the shared wrapper — this is where the new actions go
+  - Document ID and metadata are already available in EditorShell via route params and API
+  - Server cleanup should split server/index.ts into modules (routes/documents.ts, routes/folders.ts, routes/ai.ts, etc.)
+  - Use depcheck or similar to audit dependencies before removal — verify each is truly unused
+  - Run full build + typecheck after each cleanup step to catch regressions
+
+success_metrics:
+  - Users can delete or move a document in 2 clicks from within any editor
+  - package.json has zero unused dependencies
+  - server/index.ts is split into focused modules, each under 500 lines
+  - No dead imports or unused exports remain in the codebase
+  - App builds and all existing features work identically after cleanup
+
+open_questions:
+  - Is there an existing toast/notification system in the app, or do we need to add one?
+  - Should the folder picker allow creating a new folder inline, or just selecting existing ones?
+  - Are there any dependencies that appear unused but are used at runtime via dynamic imports or side effects (e.g. CSS-only imports)?

@@ -47,7 +47,6 @@
         "Remove all confirmed unused packages from package.json (skip any used via side effects or dynamic imports)",
         "Run npm install to update lockfile",
         "Verify the app builds successfully with npm run build",
-        "Verify the Electron build still works",
         "Typecheck passes"
       ],
       "priority": 3,
@@ -61,7 +60,6 @@
       "acceptanceCriteria": [
         "Identify and remove unused imports across all files in app/src/",
         "Identify and remove unused exported functions, components, and types in app/src/",
-        "Identify and remove unused CSS classes/styles",
         "No functional changes to the app",
         "Typecheck passes"
       ],

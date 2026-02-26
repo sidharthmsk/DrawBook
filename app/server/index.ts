@@ -18,8 +18,20 @@ import {
   Folder,
   Template,
   FleetingNote,
+  Task,
+  StorageAdapter,
 } from "./storage.js";
 import { createAiRouter } from "./ai.js";
+import { initDb } from "./db.js";
+import {
+  registerUser,
+  loginUser,
+  validateSession,
+  deleteSession,
+  getUserCount,
+  multiUserAuthMiddleware,
+  AuthError,
+} from "./auth.js";
 
 function typeFromId(id: string): DocumentType {
   if (id.startsWith("excalidraw-")) return "excalidraw";
@@ -48,6 +60,8 @@ const AUTH_TOKEN = APP_PASSWORD
   ? crypto.createHash("sha256").update(APP_PASSWORD).digest("hex")
   : "";
 
+const MULTI_USER = !APP_PASSWORD;
+
 const ENABLE_TLDRAW =
   (process.env.ENABLE_TLDRAW || "false").toLowerCase() === "true";
 const ENABLE_LINKING =
@@ -58,10 +72,89 @@ function requireAuth(
   res: express.Response,
   next: express.NextFunction,
 ) {
+  if (MULTI_USER) {
+    return multiUserAuthMiddleware(req, res, next);
+  }
   if (!AUTH_TOKEN) return next();
   const header = req.headers.authorization;
   if (header === `Bearer ${AUTH_TOKEN}`) return next();
   res.status(401).json({ error: "Unauthorized" });
+}
+
+async function migrateLegacyData(userId: string): Promise<void> {
+  const dataDir = process.env.DATA_DIR || path.join(process.cwd(), "data");
+  const legacyStorage = createStorageAdapter(dataDir);
+  await legacyStorage.init();
+
+  const legacyDocs = await legacyStorage.listDocumentsWithMeta();
+  if (legacyDocs.length === 0) {
+    console.log("[Migration] No legacy documents to migrate");
+    return;
+  }
+
+  const userDataDir = path.join(dataDir, "users", userId);
+  const userStorage = createStorageAdapter(userDataDir);
+  await userStorage.init();
+
+  let migrated = 0;
+  for (const item of legacyDocs) {
+    try {
+      const doc = await legacyStorage.loadDocument(item.id);
+      if (doc) {
+        await userStorage.saveDocument(item.id, doc);
+        await userStorage.saveDocMeta(item.id, item.meta);
+        migrated++;
+      }
+    } catch {
+      // skip individual doc errors
+    }
+  }
+
+  // Migrate folders
+  const folders = await legacyStorage.loadFolders();
+  if (folders.length > 0) {
+    await userStorage.saveFolders(folders);
+  }
+
+  // Migrate templates
+  const templates = await legacyStorage.loadTemplates();
+  if (templates.length > 0) {
+    await userStorage.saveTemplates(templates);
+  }
+
+  // Migrate fleeting notes
+  const notes = await legacyStorage.loadFleetingNotes();
+  if (notes.length > 0) {
+    await userStorage.saveFleetingNotes(notes);
+  }
+
+  console.log(
+    `[Migration] Migrated ${migrated} documents, ${folders.length} folders, ${templates.length} templates for user ${userId}`,
+  );
+}
+
+const userStorageCache = new Map<string, StorageAdapter>();
+const userStorageInitialized = new Set<string>();
+
+function getStorageForRequest(req: express.Request): StorageAdapter {
+  if (!MULTI_USER) return storage;
+  const userId = req.userId;
+  if (!userId) throw new Error("No userId on request");
+  let userStorage = userStorageCache.get(userId);
+  if (!userStorage) {
+    const dataDir = process.env.DATA_DIR || path.join(process.cwd(), "data");
+    userStorage = createStorageAdapter(path.join(dataDir, "users", userId));
+    userStorageCache.set(userId, userStorage);
+  }
+  return userStorage;
+}
+
+async function ensureUserStorageInit(req: express.Request): Promise<void> {
+  if (!MULTI_USER || !req.userId) return;
+  if (userStorageInitialized.has(req.userId)) return;
+  const s = getStorageForRequest(req);
+  await s.init();
+  userStorageInitialized.add(req.userId);
 }
 
 const app = express();
@@ -78,7 +171,14 @@ wss.on("connection", (ws, req) => {
   const url = new URL(req.url || "", `http://${req.headers.host}`);
   const documentId = url.searchParams.get("doc");
 
-  if (AUTH_TOKEN) {
+  if (MULTI_USER) {
+    const token = url.searchParams.get("token");
+    const user = validateSession(token || "");
+    if (!user) {
+      ws.close(1008, "Unauthorized");
+      return;
+    }
+  } else if (AUTH_TOKEN) {
     const token = url.searchParams.get("token");
     if (token !== AUTH_TOKEN) {
       ws.close(1008, "Unauthorized");
@@ -161,7 +261,73 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+app.post("/api/auth/register", loginLimiter, async (req, res) => {
+  if (!MULTI_USER) {
+    return res
+      .status(400)
+      .json({ error: "Registration not available in single-user mode" });
+  }
+  try {
+    const { username, password, displayName } = req.body;
+    const isFirstUser = getUserCount() === 0;
+    const { user, token } = registerUser(
+      username,
+      password,
+      displayName || username,
+    );
+
+    // Auto-migrate legacy data for the first user
+    if (isFirstUser) {
+      try {
+        await migrateLegacyData(user.id);
+      } catch (migErr) {
+        console.error("[Server] Legacy migration error:", migErr);
+      }
+    }
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        displayName: user.display_name,
+        isAdmin: !!user.is_admin,
+      },
+    });
+  } catch (err) {
+    if (err instanceof AuthError) {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error("[Server] Register error:", err);
+    res.status(500).json({ error: "Registration failed" });
+  }
+});
+
 app.post("/api/auth/login", loginLimiter, (req, res) => {
+  if (MULTI_USER) {
+    try {
+      const { username, password } = req.body;
+      const { user, token } = loginUser(username, password);
+      return res.json({
+        success: true,
+        token,
+        user: {
+          id: user.id,
+          username: user.username,
+          displayName: user.display_name,
+          isAdmin: !!user.is_admin,
+        },
+      });
+    } catch (err) {
+      if (err instanceof AuthError) {
+        return res.status(401).json({ error: err.message });
+      }
+      console.error("[Server] Login error:", err);
+      return res.status(500).json({ error: "Login failed" });
+    }
+  }
+
   if (!AUTH_TOKEN) {
     return res.json({ success: true, token: "" });
   }
@@ -172,13 +338,43 @@ app.post("/api/auth/login", loginLimiter, (req, res) => {
   res.json({ success: true, token: AUTH_TOKEN });
 });
 
+app.post("/api/auth/logout", (req, res) => {
+  const header = req.headers.authorization;
+  const token = header?.startsWith("Bearer ") ? header.slice(7) : "";
+  if (token && MULTI_USER) {
+    deleteSession(token);
+  }
+  res.json({ success: true });
+});
+
 app.get("/api/auth/check", (req, res) => {
+  if (MULTI_USER) {
+    const header = req.headers.authorization;
+    const token = header?.startsWith("Bearer ") ? header.slice(7) : "";
+    const user = validateSession(token);
+    const hasUsers = getUserCount() > 0;
+    return res.json({
+      authenticated: !!user,
+      required: true,
+      multiUser: true,
+      hasUsers,
+      user: user
+        ? {
+            id: user.id,
+            username: user.username,
+            displayName: user.display_name,
+            isAdmin: !!user.is_admin,
+          }
+        : null,
+    });
+  }
+
   if (!AUTH_TOKEN) {
-    return res.json({ authenticated: true, required: false });
+    return res.json({ authenticated: true, required: false, multiUser: false });
   }
   const header = req.headers.authorization;
   const valid = header === `Bearer ${AUTH_TOKEN}`;
-  res.json({ authenticated: valid, required: true });
+  res.json({ authenticated: valid, required: true, multiUser: false });
 });
 
 const ENV_FILE_PATH = process.env.ELECTRON
@@ -201,11 +397,112 @@ app.get("/api/config", (_req, res) => {
     enableLinking: ENABLE_LINKING,
     storageBackend: STORAGE_BACKEND,
     isElectron: !!process.env.ELECTRON,
+    multiUser: MULTI_USER,
   });
+});
+
+// ============ PUBLIC SHARED ACCESS (before auth) ============
+
+app.get("/api/shared/:token", async (req, res) => {
+  if (!MULTI_USER) {
+    return res.status(404).json({ error: "Sharing not available" });
+  }
+  try {
+    const { token } = req.params;
+    const db = (await import("./db.js")).getDb();
+    const link = db
+      .prepare(
+        `SELECT sl.*, u.username, u.display_name
+         FROM shared_links sl
+         JOIN users u ON sl.owner_user_id = u.id
+         WHERE sl.token = ? AND (sl.expires_at IS NULL OR sl.expires_at > datetime('now'))`,
+      )
+      .get(token) as any;
+
+    if (!link) {
+      return res.status(404).json({ error: "Share link not found or expired" });
+    }
+
+    const ownerStorage = createStorageAdapter(
+      path.join(
+        process.env.DATA_DIR || path.join(process.cwd(), "data"),
+        "users",
+        link.owner_user_id,
+      ),
+    );
+    await ownerStorage.init();
+
+    const snapshot = await ownerStorage.loadDocument(link.document_id);
+    const meta = await ownerStorage.loadDocMeta(link.document_id);
+
+    res.json({
+      snapshot,
+      metadata: meta,
+      permission: link.permission,
+      sharedBy: link.display_name || link.username,
+      documentId: link.document_id,
+    });
+  } catch (error) {
+    console.error("[Server] Shared access error:", error);
+    res.status(500).json({ error: "Failed to load shared document" });
+  }
+});
+
+app.get("/api/shared/:token/meta", async (req, res) => {
+  if (!MULTI_USER) {
+    return res.status(404).json({ error: "Sharing not available" });
+  }
+  try {
+    const { token } = req.params;
+    const db = (await import("./db.js")).getDb();
+    const link = db
+      .prepare(
+        `SELECT sl.*, u.display_name, u.username
+         FROM shared_links sl
+         JOIN users u ON sl.owner_user_id = u.id
+         WHERE sl.token = ? AND (sl.expires_at IS NULL OR sl.expires_at > datetime('now'))`,
+      )
+      .get(token) as any;
+
+    if (!link) {
+      return res.status(404).json({ error: "Share link not found or expired" });
+    }
+
+    const ownerStorage = createStorageAdapter(
+      path.join(
+        process.env.DATA_DIR || path.join(process.cwd(), "data"),
+        "users",
+        link.owner_user_id,
+      ),
+    );
+    await ownerStorage.init();
+    const meta = await ownerStorage.loadDocMeta(link.document_id);
+
+    res.json({
+      type: meta.type || typeFromId(link.document_id),
+      name: meta.name,
+      permission: link.permission,
+      sharedBy: link.display_name || link.username,
+      documentId: link.document_id,
+    });
+  } catch (error) {
+    console.error("[Server] Shared meta error:", error);
+    res.status(500).json({ error: "Failed to load shared metadata" });
+  }
 });
 
 // Protect all other /api routes
 app.use("/api", requireAuth);
+
+// Ensure per-user storage is initialized
+app.use("/api", async (req, _res, next) => {
+  try {
+    await ensureUserStorageInit(req);
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 // ============ SETTINGS ENDPOINTS ============
 
@@ -396,26 +693,108 @@ app.put("/api/settings", (req, res) => {
 // AI routes
 app.use("/api/ai", createAiRouter());
 
+// ============ SHARE MANAGEMENT ENDPOINTS ============
+
+app.post("/api/share", async (req, res) => {
+  if (!MULTI_USER) {
+    return res
+      .status(400)
+      .json({ error: "Sharing not available in single-user mode" });
+  }
+  try {
+    const { documentId, permission } = req.body;
+    if (!documentId || !["view", "edit"].includes(permission)) {
+      return res
+        .status(400)
+        .json({ error: "documentId and permission (view/edit) required" });
+    }
+
+    const db = (await import("./db.js")).getDb();
+    const { v4: uuidv4 } = await import("uuid");
+    const linkId = uuidv4();
+    const token = (await import("crypto")).randomBytes(16).toString("hex");
+
+    db.prepare(
+      `INSERT INTO shared_links (id, document_id, owner_user_id, token, permission, created_at)
+       VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+    ).run(linkId, documentId, req.userId, token, permission);
+
+    console.log(
+      `[Server] Created share link for ${documentId} (${permission})`,
+    );
+    res.json({ id: linkId, token, permission, documentId });
+  } catch (error) {
+    console.error("[Server] Share create error:", error);
+    res.status(500).json({ error: "Failed to create share link" });
+  }
+});
+
+app.get("/api/share/:documentId", async (req, res) => {
+  if (!MULTI_USER) {
+    return res.json({ links: [] });
+  }
+  try {
+    const { documentId } = req.params;
+    const db = (await import("./db.js")).getDb();
+    const links = db
+      .prepare(
+        `SELECT id, token, permission, created_at, expires_at
+         FROM shared_links
+         WHERE document_id = ? AND owner_user_id = ?
+         ORDER BY created_at DESC`,
+      )
+      .all(documentId, req.userId);
+
+    res.json({ links });
+  } catch (error) {
+    console.error("[Server] Share list error:", error);
+    res.status(500).json({ error: "Failed to list share links" });
+  }
+});
+
+app.delete("/api/share/link/:linkId", async (req, res) => {
+  if (!MULTI_USER) {
+    return res.status(400).json({ error: "Sharing not available" });
+  }
+  try {
+    const { linkId } = req.params;
+    const db = (await import("./db.js")).getDb();
+    const result = db
+      .prepare("DELETE FROM shared_links WHERE id = ? AND owner_user_id = ?")
+      .run(linkId, req.userId);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: "Share link not found" });
+    }
+
+    console.log(`[Server] Revoked share link: ${linkId}`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[Server] Share revoke error:", error);
+    res.status(500).json({ error: "Failed to revoke share link" });
+  }
+});
+
 const storage = createStorageAdapter();
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 },
 });
 
-async function loadFolders(): Promise<Folder[]> {
-  return storage.loadFolders();
+async function loadFolders(req: express.Request): Promise<Folder[]> {
+  return getStorageForRequest(req).loadFolders();
 }
 
-async function saveFolders(folders: Folder[]) {
-  await storage.saveFolders(folders);
+async function saveFolders(req: express.Request, folders: Folder[]) {
+  await getStorageForRequest(req).saveFolders(folders);
 }
 
 // ============ FOLDER ENDPOINTS ============
 
 // List all folders
-app.get("/api/folders", async (_req, res) => {
+app.get("/api/folders", async (req, res) => {
   try {
-    const folders = await loadFolders();
+    const folders = await loadFolders(req);
     res.json({ folders });
   } catch (error) {
     console.error("[Server] List folders error:", error);
@@ -431,7 +810,7 @@ app.post("/api/folders", async (req, res) => {
       return res.status(400).json({ error: "Folder name is required" });
     }
 
-    const folders = await loadFolders();
+    const folders = await loadFolders(req);
     const newFolder: Folder = {
       id: `folder-${Date.now()}`,
       name: name.trim(),
@@ -439,7 +818,7 @@ app.post("/api/folders", async (req, res) => {
       createdAt: new Date().toISOString(),
     };
     folders.push(newFolder);
-    await saveFolders(folders);
+    await saveFolders(req, folders);
 
     console.log(`[Server] Created folder: ${newFolder.name}`);
     res.json({ success: true, folder: newFolder });
@@ -459,7 +838,7 @@ app.post("/api/folders/:folderId/rename", async (req, res) => {
       return res.status(400).json({ error: "Folder name is required" });
     }
 
-    const folders = await loadFolders();
+    const folders = await loadFolders(req);
     const folder = folders.find((f) => f.id === folderId);
 
     if (!folder) {
@@ -467,7 +846,7 @@ app.post("/api/folders/:folderId/rename", async (req, res) => {
     }
 
     folder.name = name.trim();
-    await saveFolders(folders);
+    await saveFolders(req, folders);
 
     console.log(`[Server] Renamed folder: ${folderId} -> ${name}`);
     res.json({ success: true });
@@ -481,8 +860,9 @@ app.post("/api/folders/:folderId/rename", async (req, res) => {
 app.delete("/api/folders/:folderId", async (req, res) => {
   try {
     const { folderId } = req.params;
+    const s = getStorageForRequest(req);
 
-    let folders = await loadFolders();
+    let folders = await loadFolders(req);
 
     // Collect folder and all descendants
     const idsToDelete = new Set<string>();
@@ -495,14 +875,14 @@ app.delete("/api/folders/:folderId", async (req, res) => {
     collect(folderId);
 
     folders = folders.filter((f) => !idsToDelete.has(f.id));
-    await saveFolders(folders);
+    await saveFolders(req, folders);
 
     // Move documents from deleted folders to root
-    const allDocs = await storage.listDocumentsWithMeta();
+    const allDocs = await s.listDocumentsWithMeta();
     for (const doc of allDocs) {
       if (doc.meta.folderId && idsToDelete.has(doc.meta.folderId)) {
         doc.meta.folderId = null;
-        await storage.saveDocMeta(doc.id, doc.meta);
+        await s.saveDocMeta(doc.id, doc.meta);
       }
     }
 
@@ -522,7 +902,7 @@ app.post("/api/folders/:folderId/move", async (req, res) => {
     const { folderId } = req.params;
     const { parentId } = req.body;
 
-    const folders = await loadFolders();
+    const folders = await loadFolders(req);
     const folder = folders.find((f) => f.id === folderId);
     if (!folder) {
       return res.status(404).json({ error: "Folder not found" });
@@ -543,7 +923,7 @@ app.post("/api/folders/:folderId/move", async (req, res) => {
     }
 
     folder.parentId = parentId || null;
-    await saveFolders(folders);
+    await saveFolders(req, folders);
 
     console.log(
       `[Server] Moved folder ${folderId} to parent ${parentId || "root"}`,
@@ -586,12 +966,13 @@ app.post("/api/save/:documentId", async (req, res) => {
   try {
     const { documentId } = req.params;
     const { snapshot, folderId, type } = req.body;
+    const s = getStorageForRequest(req);
 
     if (!snapshot) {
       return res.status(400).json({ error: "Snapshot is required" });
     }
 
-    const prev = await storage.loadDocument(documentId);
+    const prev = await s.loadDocument(documentId);
     if (prev) {
       const versions = versionStore.get(documentId) || [];
       versions.push({ timestamp: new Date().toISOString(), snapshot: prev });
@@ -599,13 +980,13 @@ app.post("/api/save/:documentId", async (req, res) => {
       versionStore.set(documentId, versions);
     }
 
-    await storage.saveDocument(documentId, snapshot);
+    await s.saveDocument(documentId, snapshot);
 
-    const existing = await storage.loadDocMeta(documentId);
+    const existing = await s.loadDocMeta(documentId);
     if (!existing.createdAt) existing.createdAt = new Date().toISOString();
     if (folderId !== undefined) existing.folderId = folderId;
     if (type !== undefined) existing.type = type as DocumentType;
-    await storage.saveDocMeta(documentId, existing);
+    await s.saveDocMeta(documentId, existing);
 
     invalidateResponseCache();
     console.log(`[Server] Saved document: ${documentId}`);
@@ -639,18 +1020,19 @@ app.get("/api/versions/:documentId", async (req, res) => {
 app.post("/api/versions/:documentId/restore", async (req, res) => {
   try {
     const { documentId } = req.params;
+    const s = getStorageForRequest(req);
     const { index } = req.body;
     const versions = versionStore.get(documentId) || [];
     if (index < 0 || index >= versions.length) {
       return res.status(404).json({ error: "Version not found" });
     }
-    const current = await storage.loadDocument(documentId);
+    const current = await s.loadDocument(documentId);
     if (current) {
       versions.push({ timestamp: new Date().toISOString(), snapshot: current });
       if (versions.length > MAX_VERSIONS) versions.shift();
       versionStore.set(documentId, versions);
     }
-    await storage.saveDocument(documentId, versions[index].snapshot);
+    await s.saveDocument(documentId, versions[index].snapshot);
     console.log(`[Server] Restored version ${index} for ${documentId}`);
     res.json({ success: true });
   } catch (error) {
@@ -663,9 +1045,10 @@ app.post("/api/versions/:documentId/restore", async (req, res) => {
 app.get("/api/load/:documentId", async (req, res) => {
   try {
     const { documentId } = req.params;
-    const snapshot = await storage.loadDocument(documentId);
+    const s = getStorageForRequest(req);
+    const snapshot = await s.loadDocument(documentId);
     if (snapshot) {
-      const meta = await storage.loadDocMeta(documentId);
+      const meta = await s.loadDocMeta(documentId);
       console.log(`[Server] Loaded document: ${documentId}`);
       res.json({ snapshot, metadata: meta });
     } else {
@@ -680,8 +1063,9 @@ app.get("/api/load/:documentId", async (req, res) => {
 // List documents endpoint (optionally filter by folder)
 app.get("/api/documents", async (req, res) => {
   try {
+    const s = getStorageForRequest(req);
     const folderId = req.query.folderId as string | undefined;
-    const files = (await storage.listDocumentsWithMeta())
+    const files = (await s.listDocumentsWithMeta())
       .filter((item) => !item.meta.deletedAt)
       .map((item) => ({
         id: item.id,
@@ -715,10 +1099,11 @@ app.post("/api/documents/:documentId/move", async (req, res) => {
   try {
     const { documentId } = req.params;
     const { folderId } = req.body;
+    const s = getStorageForRequest(req);
 
-    const meta = await storage.loadDocMeta(documentId);
+    const meta = await s.loadDocMeta(documentId);
     meta.folderId = folderId || null;
-    await storage.saveDocMeta(documentId, meta);
+    await s.saveDocMeta(documentId, meta);
 
     console.log(
       `[Server] Moved document ${documentId} to folder ${folderId || "root"}`,
@@ -734,9 +1119,10 @@ app.post("/api/documents/:documentId/move", async (req, res) => {
 app.post("/api/documents/:documentId/star", async (req, res) => {
   try {
     const { documentId } = req.params;
-    const meta = await storage.loadDocMeta(documentId);
+    const s = getStorageForRequest(req);
+    const meta = await s.loadDocMeta(documentId);
     meta.starred = !meta.starred;
-    await storage.saveDocMeta(documentId, meta);
+    await s.saveDocMeta(documentId, meta);
     res.json({ starred: !!meta.starred });
   } catch (error) {
     console.error("[Server] Star error:", error);
@@ -749,9 +1135,10 @@ app.post("/api/documents/:documentId/tags", async (req, res) => {
   try {
     const { documentId } = req.params;
     const { tags } = req.body as { tags: string[] };
-    const meta = await storage.loadDocMeta(documentId);
+    const s = getStorageForRequest(req);
+    const meta = await s.loadDocMeta(documentId);
     meta.tags = Array.isArray(tags) ? tags : [];
-    await storage.saveDocMeta(documentId, meta);
+    await s.saveDocMeta(documentId, meta);
     res.json({ tags: meta.tags });
   } catch (error) {
     console.error("[Server] Tags error:", error);
@@ -762,12 +1149,13 @@ app.post("/api/documents/:documentId/tags", async (req, res) => {
 // Search documents endpoint
 app.get("/api/documents/search", async (req, res) => {
   try {
+    const s = getStorageForRequest(req);
     const q = ((req.query.q as string) || "").trim().toLowerCase();
     if (!q) {
       return res.json({ results: [] });
     }
 
-    const all = await storage.listDocumentsWithMeta();
+    const all = await s.listDocumentsWithMeta();
     const results = all
       .filter((item) => !item.meta.deletedAt)
       .filter((item) => {
@@ -796,12 +1184,13 @@ app.get("/api/documents/search", async (req, res) => {
 // Full-text search across document content
 app.get("/api/search/content", async (req, res) => {
   try {
+    const s = getStorageForRequest(req);
     const q = ((req.query.q as string) || "").trim().toLowerCase();
     if (!q || q.length < 2) {
       return res.json({ results: [] });
     }
 
-    const all = await storage.listDocumentsWithMeta();
+    const all = await s.listDocumentsWithMeta();
     const active = all.filter((item) => !item.meta.deletedAt);
     const results: Array<{
       id: string;
@@ -825,7 +1214,7 @@ app.get("/api/search/content", async (req, res) => {
         continue;
       }
       try {
-        const doc = await storage.loadDocument(item.id);
+        const doc = await s.loadDocument(item.id);
         if (!doc) continue;
         const text = extractText(doc, item.meta.type || typeFromId(item.id));
         const idx = text.toLowerCase().indexOf(q);
@@ -859,10 +1248,11 @@ app.get("/api/search/content", async (req, res) => {
 // Resolve document name to ID (for [[links]])
 app.get("/api/resolve", async (req, res) => {
   try {
+    const s = getStorageForRequest(req);
     const name = ((req.query.name as string) || "").trim();
     if (!name) return res.json({ document: null });
 
-    const all = await storage.listDocumentsWithMeta();
+    const all = await s.listDocumentsWithMeta();
     const nameLower = name.toLowerCase();
 
     const exact = all.find(
@@ -906,21 +1296,22 @@ app.get("/api/resolve", async (req, res) => {
 app.get("/api/backlinks/:documentId", async (req, res) => {
   try {
     const { documentId } = req.params;
+    const s = getStorageForRequest(req);
     const cacheKey = `backlinks:${documentId}`;
     const cached = getCachedResponse(cacheKey);
     if (cached) return res.json(cached);
 
-    const meta = await storage.loadDocMeta(documentId);
+    const meta = await s.loadDocMeta(documentId);
     const docName = meta.name || documentId;
     const nameLower = docName.toLowerCase();
 
-    const all = await storage.listDocumentsWithMeta();
+    const all = await s.listDocumentsWithMeta();
     const backlinks: Array<{ id: string; name: string; type: string }> = [];
 
     for (const item of all) {
       if (item.meta.deletedAt || item.id === documentId) continue;
       try {
-        const doc = await storage.loadDocument(item.id);
+        const doc = await s.loadDocument(item.id);
         if (!doc) continue;
         const text = extractText(doc, item.meta.type || typeFromId(item.id));
         const textLower = text.toLowerCase();
@@ -951,7 +1342,8 @@ app.get("/api/backlinks/:documentId", async (req, res) => {
 // List all document names (for autocomplete)
 app.get("/api/documents/names", async (req, res) => {
   try {
-    const all = await storage.listDocumentsWithMeta();
+    const s = getStorageForRequest(req);
+    const all = await s.listDocumentsWithMeta();
     const names = all
       .filter((item) => !item.meta.deletedAt)
       .map((item) => ({
@@ -980,10 +1372,11 @@ app.post("/api/extract-structure", async (req, res) => {
       nodes: Array<{ label: string; children?: string[] }>;
     }> = [];
 
+    const s = getStorageForRequest(req);
     for (const docId of documentIds) {
       try {
-        const meta = await storage.loadDocMeta(docId);
-        const doc = await storage.loadDocument(docId);
+        const meta = await s.loadDocMeta(docId);
+        const doc = await s.loadDocument(docId);
         if (!doc) continue;
         const type = meta.type || typeFromId(docId);
         const name = meta.name || docId;
@@ -1042,12 +1435,13 @@ app.post("/api/extract-structure", async (req, res) => {
 });
 
 // Get the full link graph between documents
-app.get("/api/link-graph", async (_req, res) => {
+app.get("/api/link-graph", async (req, res) => {
   try {
+    const s = getStorageForRequest(req);
     const cached = getCachedResponse("link-graph");
     if (cached) return res.json(cached);
 
-    const all = await storage.listDocumentsWithMeta();
+    const all = await s.listDocumentsWithMeta();
     const active = all.filter((item) => !item.meta.deletedAt);
     const nameToId = new Map<string, string>();
     for (const item of active) {
@@ -1064,7 +1458,7 @@ app.get("/api/link-graph", async (_req, res) => {
       nodes.push({ id: item.id, name: item.meta.name || item.id, type });
 
       try {
-        const doc = await storage.loadDocument(item.id);
+        const doc = await s.loadDocument(item.id);
         if (!doc) continue;
         const text = extractText(doc, type);
         let match: RegExpExecArray | null;
@@ -1171,10 +1565,11 @@ function extractText(doc: any, type: string): string {
 app.get("/api/document-context/:documentId", async (req, res) => {
   try {
     const { documentId } = req.params;
-    const meta = await storage.loadDocMeta(documentId);
+    const s = getStorageForRequest(req);
+    const meta = await s.loadDocMeta(documentId);
     const type = meta.type || typeFromId(documentId);
     const name = meta.name || documentId;
-    const doc = await storage.loadDocument(documentId);
+    const doc = await s.loadDocument(documentId);
     if (!doc) {
       return res.json({ name, type, context: "Document is empty." });
     }
@@ -1193,18 +1588,19 @@ app.get("/api/document-context/:documentId", async (req, res) => {
 app.post("/api/duplicate/:documentId", async (req, res) => {
   try {
     const { documentId } = req.params;
-    const snapshot = await storage.loadDocument(documentId);
+    const s = getStorageForRequest(req);
+    const snapshot = await s.loadDocument(documentId);
     if (!snapshot) {
       return res.status(404).json({ error: "Document not found" });
     }
 
-    const meta = await storage.loadDocMeta(documentId);
+    const meta = await s.loadDocMeta(documentId);
     const docType = meta.type || typeFromId(documentId);
     const newId = `${docType}-${Date.now()}`;
     const newName = `${meta.name || documentId} (Copy)`;
 
-    await storage.saveDocument(newId, snapshot);
-    await storage.saveDocMeta(newId, {
+    await s.saveDocument(newId, snapshot);
+    await s.saveDocMeta(newId, {
       folderId: meta.folderId,
       name: newName,
       type: docType,
@@ -1223,19 +1619,20 @@ app.post("/api/duplicate/:documentId", async (req, res) => {
 app.delete("/api/delete/:documentId", async (req, res) => {
   try {
     const { documentId } = req.params;
+    const s = getStorageForRequest(req);
     const permanent = req.query.permanent === "true";
 
     if (permanent) {
-      const docMeta = await storage.loadDocMeta(documentId);
+      const docMeta = await s.loadDocMeta(documentId);
       const docType = docMeta.type || typeFromId(documentId);
       let deleted = false;
       if (docType === "pdf") {
-        deleted = await storage.deleteFile(documentId, "pdf");
+        deleted = await s.deleteFile(documentId, "pdf");
       } else {
-        deleted = await storage.deleteDocument(documentId);
+        deleted = await s.deleteDocument(documentId);
       }
       if (deleted) {
-        await storage.deleteDocMeta(documentId);
+        await s.deleteDocMeta(documentId);
         invalidateResponseCache();
         console.log(`[Server] Permanently deleted: ${documentId}`);
         res.json({ success: true });
@@ -1243,9 +1640,9 @@ app.delete("/api/delete/:documentId", async (req, res) => {
         res.status(404).json({ error: "Document not found" });
       }
     } else {
-      const meta = await storage.loadDocMeta(documentId);
+      const meta = await s.loadDocMeta(documentId);
       meta.deletedAt = new Date().toISOString();
-      await storage.saveDocMeta(documentId, meta);
+      await s.saveDocMeta(documentId, meta);
       invalidateResponseCache();
       console.log(`[Server] Moved to trash: ${documentId}`);
       res.json({ success: true });
@@ -1260,9 +1657,10 @@ app.delete("/api/delete/:documentId", async (req, res) => {
 app.post("/api/trash/:documentId/restore", async (req, res) => {
   try {
     const { documentId } = req.params;
-    const meta = await storage.loadDocMeta(documentId);
+    const s = getStorageForRequest(req);
+    const meta = await s.loadDocMeta(documentId);
     delete meta.deletedAt;
-    await storage.saveDocMeta(documentId, meta);
+    await s.saveDocMeta(documentId, meta);
     invalidateResponseCache();
     console.log(`[Server] Restored from trash: ${documentId}`);
     res.json({ success: true });
@@ -1275,7 +1673,8 @@ app.post("/api/trash/:documentId/restore", async (req, res) => {
 // List trash
 app.get("/api/trash", async (req, res) => {
   try {
-    const all = await storage.listDocumentsWithMeta();
+    const s = getStorageForRequest(req);
+    const all = await s.listDocumentsWithMeta();
     const trashed = all
       .filter((item) => item.meta.deletedAt)
       .map((item) => ({
@@ -1299,16 +1698,17 @@ app.get("/api/trash", async (req, res) => {
 // Empty trash (permanently delete all trashed docs)
 app.post("/api/trash/empty", async (req, res) => {
   try {
-    const all = await storage.listDocumentsWithMeta();
+    const s = getStorageForRequest(req);
+    const all = await s.listDocumentsWithMeta();
     const trashed = all.filter((item) => item.meta.deletedAt);
     for (const item of trashed) {
       const docType = item.meta.type || typeFromId(item.id);
       if (docType === "pdf") {
-        await storage.deleteFile(item.id, "pdf");
+        await s.deleteFile(item.id, "pdf");
       } else {
-        await storage.deleteDocument(item.id);
+        await s.deleteDocument(item.id);
       }
-      await storage.deleteDocMeta(item.id);
+      await s.deleteDocMeta(item.id);
     }
     console.log(`[Server] Emptied trash: ${trashed.length} docs`);
     res.json({ success: true, count: trashed.length });
@@ -1337,28 +1737,27 @@ app.post("/api/rename/:documentId", async (req, res) => {
         .replace(/^-+/, "")
         .replace(/-+$/, "") || "untitled";
 
-    if (!(await storage.existsDocument(documentId))) {
+    const s = getStorageForRequest(req);
+    if (!(await s.existsDocument(documentId))) {
       return res.status(404).json({ error: "Document not found" });
     }
 
     if (
       documentId !== newDocumentId &&
-      (await storage.existsDocument(newDocumentId))
+      (await s.existsDocument(newDocumentId))
     ) {
       return res
         .status(400)
         .json({ error: "A document with that name already exists" });
     }
 
-    // Rename file (renameDocument also moves the .meta.json)
     if (documentId !== newDocumentId) {
-      await storage.renameDocument(documentId, newDocumentId);
+      await s.renameDocument(documentId, newDocumentId);
     }
 
-    // Update the name in metadata
-    const meta = await storage.loadDocMeta(newDocumentId);
+    const meta = await s.loadDocMeta(newDocumentId);
     meta.name = newName.trim();
-    await storage.saveDocMeta(newDocumentId, meta);
+    await s.saveDocMeta(newDocumentId, meta);
 
     invalidateResponseCache();
     console.log(`[Server] Renamed document: ${documentId} -> ${newDocumentId}`);
@@ -1373,14 +1772,15 @@ app.post("/api/rename/:documentId", async (req, res) => {
 
 app.post("/api/bulk/move", async (req, res) => {
   try {
+    const s = getStorageForRequest(req);
     const { documentIds, folderId } = req.body;
     if (!Array.isArray(documentIds)) {
       return res.status(400).json({ error: "documentIds array is required" });
     }
     for (const docId of documentIds) {
-      const meta = await storage.loadDocMeta(docId);
+      const meta = await s.loadDocMeta(docId);
       meta.folderId = folderId || null;
-      await storage.saveDocMeta(docId, meta);
+      await s.saveDocMeta(docId, meta);
     }
     console.log(
       `[Server] Bulk moved ${documentIds.length} docs to ${folderId || "root"}`,
@@ -1394,15 +1794,16 @@ app.post("/api/bulk/move", async (req, res) => {
 
 app.post("/api/bulk/delete", async (req, res) => {
   try {
+    const s = getStorageForRequest(req);
     const { documentIds } = req.body;
     if (!Array.isArray(documentIds)) {
       return res.status(400).json({ error: "documentIds array is required" });
     }
     const now = new Date().toISOString();
     for (const docId of documentIds) {
-      const meta = await storage.loadDocMeta(docId);
+      const meta = await s.loadDocMeta(docId);
       meta.deletedAt = now;
-      await storage.saveDocMeta(docId, meta);
+      await s.saveDocMeta(docId, meta);
     }
     console.log(`[Server] Bulk trashed ${documentIds.length} docs`);
     res.json({ success: true });
@@ -1420,6 +1821,7 @@ const PDF_MAGIC = Buffer.from("%PDF", "utf8");
 app.post("/api/upload", upload.single("file"), async (req, res) => {
   try {
     const file = req.file;
+    const s = getStorageForRequest(req);
     if (!file) {
       return res.status(400).json({ error: "No file provided" });
     }
@@ -1431,8 +1833,8 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
     if (ext === ".md") {
       const content = file.buffer.toString("utf-8");
       const docId = `markdown-${Date.now()}`;
-      await storage.saveDocument(docId, { content });
-      await storage.saveDocMeta(docId, {
+      await s.saveDocument(docId, { content });
+      await s.saveDocMeta(docId, {
         folderId,
         name: originalName,
         type: "markdown",
@@ -1465,8 +1867,8 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
         },
       };
       const docId = `spreadsheet-${Date.now()}`;
-      await storage.saveDocument(docId, snapshot);
-      await storage.saveDocMeta(docId, {
+      await s.saveDocument(docId, snapshot);
+      await s.saveDocMeta(docId, {
         folderId,
         name: originalName,
         type: "spreadsheet",
@@ -1486,8 +1888,8 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
     }
 
     const docId = `pdf-${Date.now()}`;
-    await storage.saveFile(docId, file.buffer, "pdf");
-    await storage.saveDocMeta(docId, {
+    await s.saveFile(docId, file.buffer, "pdf");
+    await s.saveDocMeta(docId, {
       folderId,
       name: originalName,
       type: "pdf",
@@ -1506,6 +1908,7 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
 app.post("/api/import/obsidian", upload.single("file"), async (req, res) => {
   try {
     const file = req.file;
+    const s = getStorageForRequest(req);
     if (!file) {
       return res.status(400).json({ error: "No file provided" });
     }
@@ -1521,7 +1924,7 @@ app.post("/api/import/obsidian", upload.single("file"), async (req, res) => {
 
     // Build folder structure from zip paths
     const folderMap = new Map<string, string>(); // zip path -> folder id
-    const existingFolders = await loadFolders();
+    const existingFolders = await loadFolders(req);
     const newFolders: Folder[] = [];
 
     // Create a root folder for the vault
@@ -1589,7 +1992,7 @@ app.post("/api/import/obsidian", upload.single("file"), async (req, res) => {
       folderMap.set(relative, folderId);
     }
 
-    await saveFolders([...existingFolders, ...newFolders]);
+    await saveFolders(req, [...existingFolders, ...newFolders]);
 
     // Import files
     let imported = 0;
@@ -1632,8 +2035,8 @@ app.post("/api/import/obsidian", upload.single("file"), async (req, res) => {
           (_, target, alt) => `![${alt || target}](${target})`,
         );
         const docId = `markdown-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        await storage.saveDocument(docId, { content });
-        await storage.saveDocMeta(docId, {
+        await s.saveDocument(docId, { content });
+        await s.saveDocMeta(docId, {
           folderId,
           name: baseName,
           type: "markdown",
@@ -1643,8 +2046,8 @@ app.post("/api/import/obsidian", upload.single("file"), async (req, res) => {
         imported++;
       } else if (entryExt === ".pdf") {
         const docId = `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        await storage.saveFile(docId, buf, "pdf");
-        await storage.saveDocMeta(docId, {
+        await s.saveFile(docId, buf, "pdf");
+        await s.saveDocMeta(docId, {
           folderId,
           name: baseName,
           type: "pdf",
@@ -1675,8 +2078,8 @@ app.post("/api/import/obsidian", upload.single("file"), async (req, res) => {
           },
         };
         const docId = `spreadsheet-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        await storage.saveDocument(docId, snapshot);
-        await storage.saveDocMeta(docId, {
+        await s.saveDocument(docId, snapshot);
+        await s.saveDocMeta(docId, {
           folderId,
           name: baseName,
           type: "spreadsheet",
@@ -1697,8 +2100,8 @@ app.post("/api/import/obsidian", upload.single("file"), async (req, res) => {
           const text = buf.toString("utf-8");
           const content = `# ${baseName}\n\n\`\`\`json\n${text}\n\`\`\`\n`;
           const docId = `markdown-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-          await storage.saveDocument(docId, { content });
-          await storage.saveDocMeta(docId, {
+          await s.saveDocument(docId, { content });
+          await s.saveDocMeta(docId, {
             folderId,
             name: baseName,
             type: "markdown",
@@ -1740,7 +2143,8 @@ app.post("/api/import/obsidian", upload.single("file"), async (req, res) => {
 app.get("/api/file/:documentId", async (req, res) => {
   try {
     const { documentId } = req.params;
-    const buffer = await storage.loadFile(documentId, "pdf");
+    const s = getStorageForRequest(req);
+    const buffer = await s.loadFile(documentId, "pdf");
     if (!buffer) {
       return res.status(404).json({ error: "File not found" });
     }
@@ -1759,7 +2163,8 @@ app.get("/api/file/:documentId", async (req, res) => {
 app.get("/api/meta/:documentId", async (req, res) => {
   try {
     const { documentId } = req.params;
-    const docMeta = await storage.loadDocMeta(documentId);
+    const s = getStorageForRequest(req);
+    const docMeta = await s.loadDocMeta(documentId);
     res.json({
       type: docMeta.type || typeFromId(documentId),
       name: docMeta.name,
@@ -1773,9 +2178,10 @@ app.get("/api/meta/:documentId", async (req, res) => {
 
 // ============ TEMPLATE ENDPOINTS ============
 
-app.get("/api/templates", async (_req, res) => {
+app.get("/api/templates", async (req, res) => {
   try {
-    const templates = await storage.loadTemplates();
+    const s = getStorageForRequest(req);
+    const templates = await s.loadTemplates();
     res.json({ templates });
   } catch (error) {
     console.error("[Server] Templates list error:", error);
@@ -1785,6 +2191,7 @@ app.get("/api/templates", async (_req, res) => {
 
 app.post("/api/templates", async (req, res) => {
   try {
+    const s = getStorageForRequest(req);
     const { name, type, snapshot } = req.body;
     if (!name || !type || !snapshot) {
       return res
@@ -1798,9 +2205,9 @@ app.post("/api/templates", async (req, res) => {
       snapshot,
       createdAt: new Date().toISOString(),
     };
-    const templates = await storage.loadTemplates();
+    const templates = await s.loadTemplates();
     templates.push(template);
-    await storage.saveTemplates(templates);
+    await s.saveTemplates(templates);
     console.log(`[Server] Created template: ${template.name}`);
     res.json({ template });
   } catch (error) {
@@ -1812,14 +2219,15 @@ app.post("/api/templates", async (req, res) => {
 app.post("/api/templates/:templateId/use", async (req, res) => {
   try {
     const { templateId } = req.params;
+    const s = getStorageForRequest(req);
     const { folderId } = req.body;
-    const templates = await storage.loadTemplates();
+    const templates = await s.loadTemplates();
     const tpl = templates.find((t) => t.id === templateId);
     if (!tpl) return res.status(404).json({ error: "Template not found" });
 
     const docId = `${tpl.type}-${Date.now()}`;
-    await storage.saveDocument(docId, tpl.snapshot);
-    await storage.saveDocMeta(docId, {
+    await s.saveDocument(docId, tpl.snapshot);
+    await s.saveDocMeta(docId, {
       folderId: folderId || null,
       name: tpl.name,
       type: tpl.type,
@@ -1837,12 +2245,13 @@ app.post("/api/templates/:templateId/use", async (req, res) => {
 app.delete("/api/templates/:templateId", async (req, res) => {
   try {
     const { templateId } = req.params;
-    const templates = await storage.loadTemplates();
+    const s = getStorageForRequest(req);
+    const templates = await s.loadTemplates();
     const filtered = templates.filter((t) => t.id !== templateId);
     if (filtered.length === templates.length) {
       return res.status(404).json({ error: "Template not found" });
     }
-    await storage.saveTemplates(filtered);
+    await s.saveTemplates(filtered);
     console.log(`[Server] Deleted template: ${templateId}`);
     res.json({ success: true });
   } catch (error) {
@@ -1854,9 +2263,10 @@ app.delete("/api/templates/:templateId", async (req, res) => {
 app.post("/api/templates/from-doc/:documentId", async (req, res) => {
   try {
     const { documentId } = req.params;
+    const s = getStorageForRequest(req);
     const { name } = req.body;
 
-    const meta = await storage.loadDocMeta(documentId);
+    const meta = await s.loadDocMeta(documentId);
     const docType = meta.type || typeFromId(documentId);
     let snapshot: unknown;
     if (docType === "pdf") {
@@ -1864,7 +2274,7 @@ app.post("/api/templates/from-doc/:documentId", async (req, res) => {
         .status(400)
         .json({ error: "PDF documents cannot be saved as templates" });
     }
-    snapshot = await storage.loadDocument(documentId);
+    snapshot = await s.loadDocument(documentId);
     if (!snapshot) {
       return res.status(404).json({ error: "Document not found" });
     }
@@ -1877,9 +2287,9 @@ app.post("/api/templates/from-doc/:documentId", async (req, res) => {
       snapshot,
       createdAt: new Date().toISOString(),
     };
-    const templates = await storage.loadTemplates();
+    const templates = await s.loadTemplates();
     templates.push(template);
-    await storage.saveTemplates(templates);
+    await s.saveTemplates(templates);
     console.log(
       `[Server] Saved doc as template: ${documentId} -> ${template.name}`,
     );
@@ -1901,8 +2311,8 @@ function dailyNoteId(date: string) {
   return `${DAILY_NOTE_PREFIX}${date}`;
 }
 
-async function ensureDailyFolder(): Promise<string> {
-  const folders = await loadFolders();
+async function ensureDailyFolder(req: express.Request): Promise<string> {
+  const folders = await loadFolders(req);
   if (!folders.some((f) => f.id === DAILY_FOLDER_ID)) {
     folders.push({
       id: DAILY_FOLDER_ID,
@@ -1910,7 +2320,7 @@ async function ensureDailyFolder(): Promise<string> {
       parentId: null,
       createdAt: new Date().toISOString(),
     });
-    await saveFolders(folders);
+    await saveFolders(req, folders);
   }
   return DAILY_FOLDER_ID;
 }
@@ -1929,6 +2339,7 @@ function dailyNoteTemplate(date: string) {
 app.get("/api/daily-note/:date", async (req, res) => {
   try {
     const { date } = req.params;
+    const s = getStorageForRequest(req);
     if (!DAILY_DATE_RE.test(date)) {
       return res
         .status(400)
@@ -1936,13 +2347,13 @@ app.get("/api/daily-note/:date", async (req, res) => {
     }
 
     const docId = dailyNoteId(date);
-    const exists = await storage.existsDocument(docId);
+    const exists = await s.existsDocument(docId);
 
     if (!exists) {
-      const folderId = await ensureDailyFolder();
+      const folderId = await ensureDailyFolder(req);
       const content = dailyNoteTemplate(date);
-      await storage.saveDocument(docId, { content });
-      await storage.saveDocMeta(docId, {
+      await s.saveDocument(docId, { content });
+      await s.saveDocMeta(docId, {
         folderId,
         name: date,
         type: "markdown",
@@ -1960,9 +2371,10 @@ app.get("/api/daily-note/:date", async (req, res) => {
   }
 });
 
-app.get("/api/daily-notes", async (_req, res) => {
+app.get("/api/daily-notes", async (req, res) => {
   try {
-    const all = await storage.listDocumentsWithMeta();
+    const s = getStorageForRequest(req);
+    const all = await s.listDocumentsWithMeta();
     const notes = all
       .filter(
         (item) => !item.meta.deletedAt && item.id.startsWith(DAILY_NOTE_PREFIX),
@@ -1983,9 +2395,10 @@ app.get("/api/daily-notes", async (_req, res) => {
 
 // ============ FLEETING NOTES ============
 
-app.get("/api/fleeting", async (_req, res) => {
+app.get("/api/fleeting", async (req, res) => {
   try {
-    const notes = await storage.loadFleetingNotes();
+    const s = getStorageForRequest(req);
+    const notes = await s.loadFleetingNotes();
     res.json({ notes });
   } catch (error) {
     console.error("[Server] Fleeting notes list error:", error);
@@ -1995,6 +2408,7 @@ app.get("/api/fleeting", async (_req, res) => {
 
 app.post("/api/fleeting", async (req, res) => {
   try {
+    const s = getStorageForRequest(req);
     const { text } = req.body;
     if (!text?.trim()) {
       return res.status(400).json({ error: "Text is required" });
@@ -2005,9 +2419,9 @@ app.post("/api/fleeting", async (req, res) => {
       done: false,
       createdAt: new Date().toISOString(),
     };
-    const notes = await storage.loadFleetingNotes();
+    const notes = await s.loadFleetingNotes();
     notes.unshift(note);
-    await storage.saveFleetingNotes(notes);
+    await s.saveFleetingNotes(notes);
     res.json({ note });
   } catch (error) {
     console.error("[Server] Fleeting note create error:", error);
@@ -2018,13 +2432,14 @@ app.post("/api/fleeting", async (req, res) => {
 app.patch("/api/fleeting/:noteId", async (req, res) => {
   try {
     const { noteId } = req.params;
+    const s = getStorageForRequest(req);
     const { text, done } = req.body;
-    const notes = await storage.loadFleetingNotes();
+    const notes = await s.loadFleetingNotes();
     const note = notes.find((n) => n.id === noteId);
     if (!note) return res.status(404).json({ error: "Note not found" });
     if (text !== undefined) note.text = text;
     if (done !== undefined) note.done = done;
-    await storage.saveFleetingNotes(notes);
+    await s.saveFleetingNotes(notes);
     res.json({ note });
   } catch (error) {
     console.error("[Server] Fleeting note update error:", error);
@@ -2035,12 +2450,13 @@ app.patch("/api/fleeting/:noteId", async (req, res) => {
 app.delete("/api/fleeting/:noteId", async (req, res) => {
   try {
     const { noteId } = req.params;
-    const notes = await storage.loadFleetingNotes();
+    const s = getStorageForRequest(req);
+    const notes = await s.loadFleetingNotes();
     const filtered = notes.filter((n) => n.id !== noteId);
     if (filtered.length === notes.length) {
       return res.status(404).json({ error: "Note not found" });
     }
-    await storage.saveFleetingNotes(filtered);
+    await s.saveFleetingNotes(filtered);
     res.json({ success: true });
   } catch (error) {
     console.error("[Server] Fleeting note delete error:", error);
@@ -2051,9 +2467,10 @@ app.delete("/api/fleeting/:noteId", async (req, res) => {
 app.post("/api/fleeting/:noteId/open-as", async (req, res) => {
   try {
     const { noteId } = req.params;
+    const s = getStorageForRequest(req);
     const { type } = req.body;
     const docType = (type || "markdown") as DocumentType;
-    const notes = await storage.loadFleetingNotes();
+    const notes = await s.loadFleetingNotes();
     const note = notes.find((n) => n.id === noteId);
     if (!note) return res.status(404).json({ error: "Note not found" });
 
@@ -2077,8 +2494,8 @@ app.post("/api/fleeting/:noteId/open-as", async (req, res) => {
       snapshot = {};
     }
 
-    await storage.saveDocument(docId, snapshot);
-    await storage.saveDocMeta(docId, {
+    await s.saveDocument(docId, snapshot);
+    await s.saveDocMeta(docId, {
       folderId: null,
       name,
       type: docType,
@@ -2087,13 +2504,88 @@ app.post("/api/fleeting/:noteId/open-as", async (req, res) => {
 
     note.done = true;
     note.documentId = docId;
-    await storage.saveFleetingNotes(notes);
+    await s.saveFleetingNotes(notes);
     invalidateResponseCache();
 
     res.json({ documentId: docId, type: docType });
   } catch (error) {
     console.error("[Server] Fleeting open-as error:", error);
     res.status(500).json({ error: "Failed to open as document" });
+  }
+});
+
+// ============ TASKS ============
+
+app.get("/api/tasks", async (req, res) => {
+  try {
+    const s = getStorageForRequest(req);
+    const tasks = await s.loadTasks();
+    res.json({ tasks });
+  } catch (error) {
+    console.error("[Server] Tasks list error:", error);
+    res.status(500).json({ error: "Failed to load tasks" });
+  }
+});
+
+app.post("/api/tasks", async (req, res) => {
+  try {
+    const s = getStorageForRequest(req);
+    const { text, documentId } = req.body;
+    if (!text?.trim()) {
+      return res.status(400).json({ error: "Text is required" });
+    }
+    if (!documentId) {
+      return res.status(400).json({ error: "documentId is required" });
+    }
+    const task: Task = {
+      id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      text: text.trim(),
+      done: false,
+      documentId,
+      createdAt: new Date().toISOString(),
+    };
+    const tasks = await s.loadTasks();
+    tasks.unshift(task);
+    await s.saveTasks(tasks);
+    res.json({ task });
+  } catch (error) {
+    console.error("[Server] Task create error:", error);
+    res.status(500).json({ error: "Failed to create task" });
+  }
+});
+
+app.patch("/api/tasks/:taskId", async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const s = getStorageForRequest(req);
+    const { text, done } = req.body;
+    const tasks = await s.loadTasks();
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return res.status(404).json({ error: "Task not found" });
+    if (text !== undefined) task.text = text;
+    if (done !== undefined) task.done = done;
+    await s.saveTasks(tasks);
+    res.json({ task });
+  } catch (error) {
+    console.error("[Server] Task update error:", error);
+    res.status(500).json({ error: "Failed to update task" });
+  }
+});
+
+app.delete("/api/tasks/:taskId", async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const s = getStorageForRequest(req);
+    const tasks = await s.loadTasks();
+    const filtered = tasks.filter((t) => t.id !== taskId);
+    if (filtered.length === tasks.length) {
+      return res.status(404).json({ error: "Task not found" });
+    }
+    await s.saveTasks(filtered);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[Server] Task delete error:", error);
+    res.status(500).json({ error: "Failed to delete task" });
   }
 });
 
@@ -2120,6 +2612,14 @@ export async function startServer(overrides?: {
 
   await storage.init();
   console.log(`[Server] Storage backend: ${STORAGE_BACKEND}`);
+
+  if (MULTI_USER) {
+    const dataDir = process.env.DATA_DIR || path.join(process.cwd(), "data");
+    initDb(dataDir);
+    console.log(`[Server] Multi-user mode enabled (SQLite initialized)`);
+  } else {
+    console.log(`[Server] Single-user mode (APP_PASSWORD)`);
+  }
 
   return new Promise((resolve, reject) => {
     server.listen(port, () => {

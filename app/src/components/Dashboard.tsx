@@ -11,6 +11,7 @@ import { MindMapView } from "./MindMapView";
 import { LinkGraph } from "./LinkGraph";
 import { CalendarView } from "./CalendarView";
 import { SettingsPage } from "./SettingsPage";
+import { openCommandPalette } from "./CommandPalette";
 
 type DocumentType =
   | "tldraw"
@@ -659,6 +660,17 @@ export function Dashboard({ config }: { config: AppConfig }) {
   >([]);
   const [fleetingInput, setFleetingInput] = useState("");
   const [fleetingTypeMenu, setFleetingTypeMenu] = useState<string | null>(null);
+  const [showTasks, setShowTasks] = useState(false);
+  const [tasks, setTasks] = useState<
+    Array<{
+      id: string;
+      text: string;
+      done: boolean;
+      documentId: string;
+      createdAt: string;
+    }>
+  >([]);
+  const [taskFilter, setTaskFilter] = useState<"all" | "open" | "done">("all");
   const [templates, setTemplates] = useState<
     Array<{
       id: string;
@@ -724,6 +736,28 @@ export function Dashboard({ config }: { config: AppConfig }) {
   useEffect(() => {
     localStorage.setItem("drawbook_view_mode", viewMode);
   }, [viewMode]);
+
+  // Listen for command palette dashboard actions (settings, trash)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail?.action) return;
+      if (detail.action === "settings") {
+        setShowSettings(true);
+        setShowTrash(false);
+        setShowTasks(false);
+        setShowLinkGraph(false);
+      } else if (detail.action === "trash") {
+        setShowTrash(true);
+        setShowSettings(false);
+        setShowTasks(false);
+        setShowLinkGraph(false);
+      }
+    };
+    document.addEventListener("command-palette-action", handler);
+    return () =>
+      document.removeEventListener("command-palette-action", handler);
+  }, []);
 
   const SIDEBAR_MIN = 200;
   const SIDEBAR_MAX = 500;
@@ -1285,6 +1319,40 @@ export function Dashboard({ config }: { config: AppConfig }) {
     }
   };
 
+  const loadTasks = async () => {
+    try {
+      const res = await fetch("/api/tasks");
+      const data = await res.json();
+      setTasks(data.tasks || []);
+    } catch (err) {
+      console.error("Failed to load tasks:", err);
+    }
+  };
+
+  const toggleTaskDone = async (taskId: string, done: boolean) => {
+    try {
+      await fetch(`/api/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ done }),
+      });
+      setTasks((prev) =>
+        prev.map((t) => (t.id === taskId ? { ...t, done } : t)),
+      );
+    } catch (err) {
+      console.error("Failed to toggle task:", err);
+    }
+  };
+
+  const deleteTask = async (taskId: string) => {
+    try {
+      await fetch(`/api/tasks/${taskId}`, { method: "DELETE" });
+      setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    } catch (err) {
+      console.error("Failed to delete task:", err);
+    }
+  };
+
   const restoreFromTrash = async (docId: string) => {
     try {
       const res = await fetch(`/api/trash/${docId}/restore`, {
@@ -1667,8 +1735,8 @@ export function Dashboard({ config }: { config: AppConfig }) {
           onClick={() => {
             setCurrentFolder(null);
             setShowTrash(false);
+            setShowTasks(false);
             setShowLinkGraph(false);
-
             setShowSettings(false);
             setSidebarOpen(false);
           }}
@@ -1811,10 +1879,13 @@ export function Dashboard({ config }: { config: AppConfig }) {
                         onClick={() => {
                           setCurrentFolder(folder.id);
                           setShowTrash(false);
+                          setShowTasks(false);
                           setShowLinkGraph(false);
-
                           setShowSettings(false);
                           setSidebarOpen(false);
+                          if (hasChildren && !expandedFolders.has(folder.id)) {
+                            toggleExpand(folder.id);
+                          }
                         }}
                       >
                         <IconFolder />
@@ -1903,10 +1974,36 @@ export function Dashboard({ config }: { config: AppConfig }) {
 
         <div style={{ flex: 1 }} />
         <button
+          className={`folder-link trash-link${showTasks ? " active" : ""}`}
+          onClick={() => {
+            setShowTasks(true);
+            setShowTrash(false);
+            setShowLinkGraph(false);
+            setShowSettings(false);
+            setCurrentFolder(null);
+            loadTasks();
+          }}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <rect x="2" y="2" width="12" height="12" rx="2" />
+            <path d="M5 8l2 2 4-4" />
+          </svg>
+          <span>Tasks</span>
+        </button>
+        <button
           className={`folder-link trash-link${showTrash ? " active" : ""}`}
           onClick={() => {
             setShowTrash(true);
-
+            setShowTasks(false);
             setShowLinkGraph(false);
             setShowSettings(false);
             setCurrentFolder(null);
@@ -1933,7 +2030,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
             onClick={() => {
               setShowLinkGraph(true);
               setShowTrash(false);
-
+              setShowTasks(false);
               setShowSettings(false);
             }}
           >
@@ -1960,6 +2057,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
           onClick={() => {
             setShowSettings(true);
             setShowTrash(false);
+            setShowTasks(false);
             setShowLinkGraph(false);
           }}
         >
@@ -2001,14 +2099,34 @@ export function Dashboard({ config }: { config: AppConfig }) {
                 onChange={(e) => {
                   setSearchTerm(e.target.value);
                   setShowTrash(false);
+                  setShowTasks(false);
                   setShowLinkGraph(false);
-
                   setShowSettings(false);
                   doContentSearch(e.target.value);
                 }}
                 placeholder="Search documents & content..."
               />
             </div>
+
+            <button
+              className="command-palette-trigger"
+              onClick={() => openCommandPalette("actions")}
+              title="Command Palette (⌘K then >)"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M6 4l4 4-4 4" />
+                <rect x="1" y="1" width="14" height="14" rx="3" />
+              </svg>
+            </button>
 
             <select
               className="sort-select"
@@ -2142,14 +2260,13 @@ export function Dashboard({ config }: { config: AppConfig }) {
                 >
                   {(
                     [
-                      "tldraw",
-                      "excalidraw",
-                      "drawio",
                       "markdown",
-                      "spreadsheet",
                       "kanban",
+                      "excalidraw",
                       "code",
                       "grid",
+                      "spreadsheet",
+                      "tldraw",
                     ] as DocumentType[]
                   )
                     .filter((type) => type !== "tldraw" || config.enableTldraw)
@@ -2228,6 +2345,144 @@ export function Dashboard({ config }: { config: AppConfig }) {
           />
         ) : showLinkGraph && config.enableLinking ? (
           <LinkGraph onClose={() => setShowLinkGraph(false)} />
+        ) : showTasks ? (
+          <section className="tasks-view">
+            <div className="tasks-view__header">
+              <h3>Tasks</h3>
+              <div className="tasks-view__filters">
+                {(["all", "open", "done"] as const).map((f) => (
+                  <button
+                    key={f}
+                    className={`tasks-view__filter-btn${taskFilter === f ? " tasks-view__filter-btn--active" : ""}`}
+                    onClick={() => setTaskFilter(f)}
+                  >
+                    {f.charAt(0).toUpperCase() + f.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {(() => {
+              const filtered = tasks.filter((t) =>
+                taskFilter === "all"
+                  ? true
+                  : taskFilter === "open"
+                    ? !t.done
+                    : t.done,
+              );
+              if (filtered.length === 0) {
+                return (
+                  <div className="empty-state">
+                    <p>
+                      {taskFilter === "all"
+                        ? "No tasks yet. Add tasks from inside any document using the toolbar button."
+                        : taskFilter === "open"
+                          ? "No open tasks."
+                          : "No completed tasks."}
+                    </p>
+                  </div>
+                );
+              }
+              const grouped = new Map<string, Array<(typeof filtered)[0]>>();
+              for (const t of filtered) {
+                const key = t.documentId;
+                if (!grouped.has(key)) grouped.set(key, []);
+                grouped.get(key)!.push(t);
+              }
+              return (
+                <div className="tasks-view__groups">
+                  {Array.from(grouped.entries()).map(([docId, docTasks]) => {
+                    const doc = allDocs.find((d) => d.id === docId);
+                    const docName = doc?.name || doc?.id || docId;
+                    const docType = doc?.type as DocumentType | undefined;
+                    const isDeleted = !doc;
+                    return (
+                      <div key={docId} className="tasks-view__group">
+                        <div className="tasks-view__group-header">
+                          <button
+                            className={`tasks-view__doc-link${isDeleted ? " tasks-view__doc-link--deleted" : ""}`}
+                            onClick={() => {
+                              if (!isDeleted && doc) openDoc(doc);
+                            }}
+                            disabled={isDeleted}
+                            title={
+                              isDeleted
+                                ? "Document no longer exists"
+                                : `Open ${docName}`
+                            }
+                          >
+                            {docType && TYPE_CONFIG[docType] && (
+                              <span
+                                style={{
+                                  color: TYPE_CONFIG[docType].color,
+                                  marginRight: 6,
+                                }}
+                              >
+                                {TYPE_CONFIG[docType].label}
+                              </span>
+                            )}
+                            {docName}
+                            {isDeleted && (
+                              <span className="tasks-view__deleted-badge">
+                                deleted
+                              </span>
+                            )}
+                          </button>
+                        </div>
+                        {docTasks.map((task) => (
+                          <div
+                            key={task.id}
+                            className={`tasks-view__item${task.done ? " tasks-view__item--done" : ""}`}
+                          >
+                            <button
+                              className={`tasks-view__check${task.done ? " tasks-view__check--checked" : ""}`}
+                              onClick={() =>
+                                toggleTaskDone(task.id, !task.done)
+                              }
+                            >
+                              {task.done && (
+                                <svg
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 12 12"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path d="M2 6l3 3 5-5" />
+                                </svg>
+                              )}
+                            </button>
+                            <span className="tasks-view__text">
+                              {task.text}
+                            </span>
+                            <button
+                              className="tasks-view__delete"
+                              onClick={() => deleteTask(task.id)}
+                              title="Delete task"
+                            >
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 12 12"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                              >
+                                <path d="M3 3l6 6M9 3l-6 6" />
+                              </svg>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </section>
         ) : showTrash ? (
           <section className="trash-view">
             <div className="trash-view__header">
