@@ -1,19 +1,29 @@
 import express from "express";
 import cors from "cors";
 import crypto from "crypto";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import multer from "multer";
-import { createStorageAdapter, DocumentType, Folder } from "./storage.js";
+import {
+  createStorageAdapter,
+  sanitizeDocumentId,
+  DocumentType,
+  Folder,
+} from "./storage.js";
 
 function typeFromId(id: string): DocumentType {
   if (id.startsWith("excalidraw-")) return "excalidraw";
   if (id.startsWith("drawio-")) return "drawio";
   if (id.startsWith("markdown-")) return "markdown";
   if (id.startsWith("pdf-")) return "pdf";
+  if (id.startsWith("spreadsheet-")) return "spreadsheet";
+  if (id.startsWith("grid-")) return "grid";
+  if (id.startsWith("kanban-")) return "kanban";
   return "tldraw";
 }
 
@@ -108,13 +118,37 @@ wss.on("connection", (ws, req) => {
   });
 });
 
-// CORS - open for internal network use
-app.use(cors());
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  }),
+);
+
+const corsOrigins = process.env.CORS_ORIGINS?.split(",").filter(Boolean);
+app.use(
+  cors(
+    corsOrigins?.length
+      ? {
+          origin: corsOrigins,
+          credentials: true,
+        }
+      : undefined,
+  ),
+);
 app.use(express.json({ limit: "50mb" }));
 
 // ============ AUTH ENDPOINTS (public) ============
 
-app.post("/api/auth/login", (req, res) => {
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: "Too many login attempts, try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.post("/api/auth/login", loginLimiter, (req, res) => {
   if (!AUTH_TOKEN) {
     return res.json({ success: true, token: "" });
   }
@@ -516,11 +550,21 @@ app.post("/api/bulk/delete", async (req, res) => {
 // ============ FILE ENDPOINTS ============
 
 // Upload a file (PDF)
+const PDF_MAGIC = Buffer.from("%PDF", "utf8");
+
 app.post("/api/upload", upload.single("file"), async (req, res) => {
   try {
     const file = req.file;
     if (!file) {
       return res.status(400).json({ error: "No file provided" });
+    }
+
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext !== ".pdf") {
+      return res.status(400).json({ error: "Only PDF files are allowed" });
+    }
+    if (!file.buffer.subarray(0, 4).equals(PDF_MAGIC)) {
+      return res.status(400).json({ error: "File is not a valid PDF" });
     }
 
     const folderId = (req.body.folderId as string) || null;
@@ -553,11 +597,9 @@ app.get("/api/file/:documentId", async (req, res) => {
       return res.status(404).json({ error: "File not found" });
     }
 
+    const safeFilename = documentId.replace(/[^\w.-]/g, "_") + ".pdf";
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `inline; filename="${documentId}.pdf"`,
-    );
+    res.setHeader("Content-Disposition", `inline; filename="${safeFilename}"`);
     res.send(buffer);
   } catch (error) {
     console.error("[Server] File serve error:", error);

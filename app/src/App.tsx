@@ -4,16 +4,28 @@ import { ExcalidrawEditor } from "./components/ExcalidrawEditor";
 import { DrawioEditor } from "./components/DrawioEditor";
 import { MarkdownEditor } from "./components/MarkdownEditor";
 import { PdfViewer } from "./components/PdfViewer";
+import { SpreadsheetEditor } from "./components/SpreadsheetEditor";
+import { KanbanEditor } from "./components/KanbanEditor";
 import { Dashboard } from "./components/Dashboard";
 import { LoginPage } from "./components/LoginPage";
+import { ConfirmProvider } from "./components/ConfirmDialog";
 
-type DocumentType = "tldraw" | "excalidraw" | "drawio" | "markdown" | "pdf";
+type DocumentType =
+  | "tldraw"
+  | "excalidraw"
+  | "drawio"
+  | "markdown"
+  | "pdf"
+  | "spreadsheet"
+  | "kanban";
 
 function typeFromId(id: string): DocumentType {
   if (id.startsWith("excalidraw-")) return "excalidraw";
   if (id.startsWith("drawio-")) return "drawio";
   if (id.startsWith("markdown-")) return "markdown";
   if (id.startsWith("pdf-")) return "pdf";
+  if (id.startsWith("spreadsheet-")) return "spreadsheet";
+  if (id.startsWith("kanban-")) return "kanban";
   return "tldraw";
 }
 
@@ -85,7 +97,11 @@ function App() {
     return <LoginPage onLogin={handleLogin} />;
   }
 
-  return <AppRouter />;
+  return (
+    <ConfirmProvider>
+      <AppRouter />
+    </ConfirmProvider>
+  );
 }
 
 function AppRouter() {
@@ -133,6 +149,10 @@ function AppRouter() {
       return <MarkdownEditor documentId={documentId} />;
     case "pdf":
       return <PdfViewer documentId={documentId} />;
+    case "spreadsheet":
+      return <SpreadsheetEditor documentId={documentId} />;
+    case "kanban":
+      return <KanbanEditor documentId={documentId} />;
     default:
       return (
         <TldrawEditor documentId={documentId} initialFolderId={folderId} />

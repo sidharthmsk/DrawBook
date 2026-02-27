@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useConfirm } from "./ConfirmDialog";
 
 interface DocumentItem {
   id: string;
@@ -94,6 +95,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({ currentDocId, open }: SidebarProps) {
+  const confirm = useConfirm();
   const [allDocs, setAllDocs] = useState<DocumentItem[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -198,9 +200,11 @@ export function Sidebar({ currentDocId, open }: SidebarProps) {
 
   const deleteFolder = async (folderId: string) => {
     if (
-      !confirm(
-        "Delete this folder? Drawings inside it will be moved to the root.",
-      )
+      !(await confirm({
+        message:
+          "Delete this folder? Drawings inside it will be moved to the root.",
+        danger: true,
+      }))
     )
       return;
     try {
@@ -213,7 +217,8 @@ export function Sidebar({ currentDocId, open }: SidebarProps) {
   };
 
   const deleteDoc = async (docId: string) => {
-    if (!confirm("Delete this drawing?")) return;
+    if (!(await confirm({ message: "Delete this drawing?", danger: true })))
+      return;
     try {
       const res = await fetch(`/api/delete/${docId}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Delete drawing failed");

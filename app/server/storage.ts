@@ -17,7 +17,10 @@ export type DocumentType =
   | "excalidraw"
   | "drawio"
   | "markdown"
-  | "pdf";
+  | "pdf"
+  | "spreadsheet"
+  | "grid"
+  | "kanban";
 
 export interface Folder {
   id: string;
@@ -39,6 +42,23 @@ export interface StoredDocumentInfo {
 
 export interface DocumentWithMeta extends StoredDocumentInfo {
   meta: DocMetadata;
+}
+
+const VALID_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+const VALID_EXT_RE = /^[a-z0-9]+$/;
+
+export function sanitizeDocumentId(id: string): string {
+  if (!id || id.includes("..") || !VALID_ID_RE.test(id)) {
+    throw new Error(`Invalid document ID: ${id}`);
+  }
+  return id;
+}
+
+function sanitizeExtension(ext: string): string {
+  if (!ext || !VALID_EXT_RE.test(ext)) {
+    throw new Error(`Invalid file extension: ${ext}`);
+  }
+  return ext;
 }
 
 export interface StorageAdapter {
@@ -76,13 +96,13 @@ class LocalStorageAdapter implements StorageAdapter {
     return path.join(this.dataDir, "_folders.json");
   }
   private docFilePath(documentId: string) {
-    return path.join(this.dataDir, `${documentId}.json`);
+    return path.join(this.dataDir, `${sanitizeDocumentId(documentId)}.json`);
   }
   private metaDir() {
     return path.join(this.dataDir, "_docmeta");
   }
   private metaFilePath(documentId: string) {
-    return path.join(this.metaDir(), `${documentId}.json`);
+    return path.join(this.metaDir(), `${sanitizeDocumentId(documentId)}.json`);
   }
   private legacyMetadataPath() {
     return path.join(this.dataDir, "_metadata.json");
@@ -224,7 +244,32 @@ class LocalStorageAdapter implements StorageAdapter {
   }
 
   async listDocumentsWithMeta(): Promise<DocumentWithMeta[]> {
-    const files = await fs.readdir(this.dataDir);
+    const [files, metaFiles] = await Promise.all([
+      fs.readdir(this.dataDir),
+      fs.readdir(this.metaDir()).catch(() => [] as string[]),
+    ]);
+
+    const metaCache = new Map<string, DocMetadata>();
+    const metaContents = await Promise.all(
+      metaFiles
+        .filter((f) => f.endsWith(".json"))
+        .map(async (f) => {
+          const id = f.replace(".json", "");
+          try {
+            const raw = await fs.readFile(
+              path.join(this.metaDir(), f),
+              "utf-8",
+            );
+            return { id, meta: JSON.parse(raw) as DocMetadata };
+          } catch {
+            return { id, meta: { folderId: null } as DocMetadata };
+          }
+        }),
+    );
+    for (const { id, meta } of metaContents) {
+      metaCache.set(id, meta);
+    }
+
     const docFiles = files.filter(
       (f) => f.endsWith(".json") && !f.startsWith("_"),
     );
@@ -232,7 +277,7 @@ class LocalStorageAdapter implements StorageAdapter {
       docFiles.map(async (file) => {
         const id = file.replace(".json", "");
         const stats = await fs.stat(path.join(this.dataDir, file));
-        const meta = await this.loadDocMeta(id);
+        const meta = metaCache.get(id) || { folderId: null };
         return { id, modifiedAt: stats.mtime.toISOString(), meta };
       }),
     );
@@ -269,7 +314,10 @@ class LocalStorageAdapter implements StorageAdapter {
   }
 
   private rawFilePath(documentId: string, extension: string) {
-    return path.join(this.dataDir, `${documentId}.${extension}`);
+    return path.join(
+      this.dataDir,
+      `${sanitizeDocumentId(documentId)}.${sanitizeExtension(extension)}`,
+    );
   }
 
   async saveFile(documentId: string, buffer: Buffer, extension: string) {
@@ -334,13 +382,13 @@ class MinioStorageAdapter implements StorageAdapter {
     return this.keyFor("docs/");
   }
   private docKey(documentId: string) {
-    return this.keyFor(`docs/${documentId}.json`);
+    return this.keyFor(`docs/${sanitizeDocumentId(documentId)}.json`);
   }
   private docMetaPrefix() {
     return this.keyFor("docmeta/");
   }
   private docMetaKey(documentId: string) {
-    return this.keyFor(`docmeta/${documentId}.json`);
+    return this.keyFor(`docmeta/${sanitizeDocumentId(documentId)}.json`);
   }
   private foldersKey() {
     return this.keyFor("meta/folders.json");
@@ -349,7 +397,9 @@ class MinioStorageAdapter implements StorageAdapter {
     return this.keyFor("meta/metadata.json");
   }
   private fileKey(documentId: string, extension: string) {
-    return this.keyFor(`files/${documentId}.${extension}`);
+    return this.keyFor(
+      `files/${sanitizeDocumentId(documentId)}.${sanitizeExtension(extension)}`,
+    );
   }
 
   async init() {
@@ -560,11 +610,12 @@ class MinioStorageAdapter implements StorageAdapter {
         : undefined;
     } while (continuationToken);
 
-    const results: DocumentWithMeta[] = [];
-    for (const item of contentKeys) {
-      const meta = await this.loadDocMeta(item.id);
-      results.push({ ...item, meta });
-    }
+    const results = await Promise.all(
+      contentKeys.map(async (item) => {
+        const meta = await this.loadDocMeta(item.id);
+        return { ...item, meta };
+      }),
+    );
     return results;
   }
 
