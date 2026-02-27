@@ -1,10 +1,4 @@
-import {
-  useState,
-  useEffect,
-  useRef,
-  type ReactNode,
-  type MouseEvent as ReactMouseEvent,
-} from "react";
+import { useState, useEffect } from "react";
 import { EditableTitle } from "./EditableTitle";
 import { AiChatPanel } from "./ai/AiChatPanel";
 import type { EditorAdapter } from "./ai/EditorAdapter";
@@ -12,83 +6,21 @@ import { useIsMobile } from "../hooks/useIsMobile";
 import { openCommandPalette } from "./CommandPalette";
 import { ShareModal } from "./ShareModal";
 import { useConfirm } from "./ConfirmDialog";
-
-interface DocMeta {
-  type?: string;
-  createdAt?: string;
-  tags?: string[];
-  folderId?: string | null;
-  name?: string;
-}
+import { MobileOverflowMenu } from "./MobileOverflowMenu";
+import { EditorVersionBar } from "./EditorVersionBar";
+import { EditorInfoBar, type DocMeta } from "./EditorInfoBar";
+import { EditorTaskPopover } from "./EditorTaskPopover";
 
 interface EditorShellProps {
   documentId: string;
   adapter: EditorAdapter | null;
   saveStatus: "saved" | "saving" | "error" | "syncing";
-  children: ReactNode;
+  children: React.ReactNode;
   contentClassName?: string;
   onExport?: () => void;
   exportLabel?: string;
-  exportExtra?: ReactNode;
+  exportExtra?: React.ReactNode;
   mobileImmersive?: boolean;
-}
-
-function MobileOverflowMenu({ children }: { children: ReactNode }) {
-  const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  const handleMenuClick = (event: ReactMouseEvent<HTMLDivElement>) => {
-    const target = event.target as HTMLElement;
-
-    // Keep the menu open for nested interactive controls (e.g. select dropdowns).
-    if (
-      target.closest(
-        "select, option, input, textarea, [role='combobox'], .export-format-select, .editor-task-popover-wrapper",
-      )
-    ) {
-      return;
-    }
-
-    if (target.closest("button, a")) {
-      setOpen(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent | TouchEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    document.addEventListener("touchstart", handler);
-    return () => {
-      document.removeEventListener("mousedown", handler);
-      document.removeEventListener("touchstart", handler);
-    };
-  }, [open]);
-
-  return (
-    <div className="mobile-overflow" ref={menuRef}>
-      <button
-        className="mobile-overflow__trigger"
-        onClick={() => setOpen((v) => !v)}
-        title="More actions"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <circle cx="3" cy="8" r="1.5" />
-          <circle cx="8" cy="8" r="1.5" />
-          <circle cx="13" cy="8" r="1.5" />
-        </svg>
-      </button>
-      {open && (
-        <div className="mobile-overflow__menu" onClick={handleMenuClick}>
-          {children}
-        </div>
-      )}
-    </div>
-  );
 }
 
 export function EditorShell({
@@ -111,25 +43,6 @@ export function EditorShell({
   const [templateSaving, setTemplateSaving] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [isMultiUser, setIsMultiUser] = useState(false);
-  const [taskOpen, setTaskOpen] = useState(false);
-  const [taskInput, setTaskInput] = useState("");
-  const [docTasks, setDocTasks] = useState<
-    Array<{
-      id: string;
-      text: string;
-      done: boolean;
-      documentId: string;
-      createdAt: string;
-    }>
-  >([]);
-  const taskPopoverRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    fetch("/api/config")
-      .then((r) => r.json())
-      .then((data) => setIsMultiUser(!!data.multiUser))
-      .catch(() => {});
-  }, []);
   const [versions, setVersions] = useState<
     Array<{ index: number; timestamp: string }>
   >([]);
@@ -137,6 +50,13 @@ export function EditorShell({
   const [breadcrumbs, setBreadcrumbs] = useState<
     Array<{ id: string | null; name: string }>
   >([]);
+
+  useEffect(() => {
+    fetch("/api/config")
+      .then((r) => r.json())
+      .then((data) => setIsMultiUser(!!data.multiUser))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -255,77 +175,6 @@ export function EditorShell({
     }
     loadBreadcrumbs();
   }, [documentId]);
-
-  const loadDocTasks = async () => {
-    try {
-      const res = await fetch("/api/tasks");
-      const data = await res.json();
-      setDocTasks(
-        (data.tasks || []).filter(
-          (t: { documentId: string }) => t.documentId === documentId,
-        ),
-      );
-    } catch (err) {
-      console.error("Failed to load tasks:", err);
-    }
-  };
-
-  const addDocTask = async () => {
-    if (!taskInput.trim()) return;
-    try {
-      const res = await fetch("/api/tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: taskInput.trim(), documentId }),
-      });
-      if (!res.ok) throw new Error("Create failed");
-      const data = await res.json();
-      setDocTasks((prev) => [data.task, ...prev]);
-      setTaskInput("");
-    } catch (err) {
-      console.error("Failed to add task:", err);
-    }
-  };
-
-  const toggleDocTask = async (taskId: string, done: boolean) => {
-    try {
-      await fetch(`/api/tasks/${taskId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ done }),
-      });
-      setDocTasks((prev) =>
-        prev.map((t) => (t.id === taskId ? { ...t, done } : t)),
-      );
-    } catch (err) {
-      console.error("Failed to toggle task:", err);
-    }
-  };
-
-  const deleteDocTask = async (taskId: string) => {
-    if (!(await confirm({ message: "Delete this task?", danger: true })))
-      return;
-    try {
-      await fetch(`/api/tasks/${taskId}`, { method: "DELETE" });
-      setDocTasks((prev) => prev.filter((t) => t.id !== taskId));
-    } catch (err) {
-      console.error("Failed to delete task:", err);
-    }
-  };
-
-  useEffect(() => {
-    if (!taskOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (
-        taskPopoverRef.current &&
-        !taskPopoverRef.current.contains(e.target as Node)
-      ) {
-        setTaskOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [taskOpen]);
 
   const statusLabel =
     saveStatus === "saved"
@@ -458,109 +307,6 @@ export function EditorShell({
     </button>
   );
 
-  const taskButton = (
-    <div className="editor-task-popover-wrapper" ref={taskPopoverRef}>
-      <button
-        className={`editor-export-btn${taskOpen ? " editor-export-btn--active" : ""}`}
-        onClick={() => {
-          setTaskOpen((v) => {
-            if (!v) loadDocTasks();
-            return !v;
-          });
-        }}
-        title="Document Tasks"
-      >
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <rect x="2" y="2" width="12" height="12" rx="2" />
-          <path d="M5 8l2 2 4-4" />
-        </svg>
-        <span>Tasks</span>
-      </button>
-      {taskOpen && (
-        <div className="editor-task-popover">
-          <form
-            className="editor-task-popover__form"
-            onSubmit={(e) => {
-              e.preventDefault();
-              addDocTask();
-            }}
-          >
-            <input
-              className="editor-task-popover__input"
-              value={taskInput}
-              onChange={(e) => setTaskInput(e.target.value)}
-              placeholder="Add a task..."
-              autoFocus
-            />
-            <button className="editor-task-popover__add" type="submit">
-              Add
-            </button>
-          </form>
-          <div className="editor-task-popover__list">
-            {docTasks.length === 0 && (
-              <p className="editor-task-popover__empty">
-                No tasks for this document yet.
-              </p>
-            )}
-            {docTasks.map((task) => (
-              <div
-                key={task.id}
-                className={`editor-task-popover__item${task.done ? " editor-task-popover__item--done" : ""}`}
-              >
-                <button
-                  className={`editor-task-popover__check${task.done ? " editor-task-popover__check--checked" : ""}`}
-                  onClick={() => toggleDocTask(task.id, !task.done)}
-                >
-                  {task.done && (
-                    <svg
-                      width="10"
-                      height="10"
-                      viewBox="0 0 12 12"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M2 6l3 3 5-5" />
-                    </svg>
-                  )}
-                </button>
-                <span className="editor-task-popover__text">{task.text}</span>
-                <button
-                  className="editor-task-popover__delete"
-                  onClick={() => deleteDocTask(task.id)}
-                  title="Delete task"
-                >
-                  <svg
-                    width="10"
-                    height="10"
-                    viewBox="0 0 12 12"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                  >
-                    <path d="M3 3l6 6M9 3l-6 6" />
-                  </svg>
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-
   const shareButton = isMultiUser ? (
     <button
       className="editor-export-btn"
@@ -689,7 +435,7 @@ export function EditorShell({
                   {exportButton}
                   {exportExtra}
                   {templateButton}
-                  {taskButton}
+                  <EditorTaskPopover documentId={documentId} />
                   {shareButton}
                 </MobileOverflowMenu>
                 {aiToggle}
@@ -701,7 +447,7 @@ export function EditorShell({
                 {exportButton}
                 {exportExtra}
                 {templateButton}
-                {taskButton}
+                <EditorTaskPopover documentId={documentId} />
                 {shareButton}
                 {paletteButton}
                 {aiToggle}
@@ -710,68 +456,9 @@ export function EditorShell({
           </div>
         </div>
       )}
-      {!immersiveMobile && infoOpen && docMeta && (
-        <div className="editor-info-bar">
-          <span>
-            <strong>Type:</strong> {docMeta.type || "unknown"}
-          </span>
-          {docMeta.createdAt && (
-            <span>
-              <strong>Created:</strong>{" "}
-              {new Date(docMeta.createdAt).toLocaleDateString()}
-            </span>
-          )}
-          {docMeta.folderId && (
-            <span>
-              <strong>Folder:</strong> {docMeta.folderId}
-            </span>
-          )}
-          {docMeta.tags && docMeta.tags.length > 0 && (
-            <span>
-              <strong>Tags:</strong> {docMeta.tags.join(", ")}
-            </span>
-          )}
-        </div>
-      )}
+      {!immersiveMobile && infoOpen && <EditorInfoBar docMeta={docMeta} />}
       {!immersiveMobile && versionOpen && (
-        <div className="editor-version-bar">
-          <strong>Version History</strong>
-          {versions.length === 0 ? (
-            <span className="editor-version-bar__empty">
-              No versions saved yet. Versions are created on each save.
-            </span>
-          ) : (
-            <div className="editor-version-bar__list">
-              {versions.map((v) => (
-                <div key={v.index} className="editor-version-bar__item">
-                  <span>{new Date(v.timestamp).toLocaleString()}</span>
-                  <button
-                    className="editor-version-bar__restore"
-                    onClick={async () => {
-                      try {
-                        const res = await fetch(
-                          `/api/versions/${documentId}/restore`,
-                          {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ index: v.index }),
-                          },
-                        );
-                        if (res.ok) {
-                          window.location.reload();
-                        }
-                      } catch (err) {
-                        console.error("Restore failed:", err);
-                      }
-                    }}
-                  >
-                    Restore
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <EditorVersionBar versions={versions} documentId={documentId} />
       )}
       <div className="editor-content">
         <div className={contentClassName || "editor-canvas"}>{children}</div>

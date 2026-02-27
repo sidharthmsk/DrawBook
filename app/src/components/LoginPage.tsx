@@ -1,5 +1,4 @@
 import { FormEvent, useState } from "react";
-
 interface LoginPageProps {
   onLogin: (token: string) => void;
   multiUser?: boolean;

@@ -24,22 +24,31 @@ export function createAiRouter() {
     if (editorType === "excalidraw") {
       return (
         base +
-        `When the user asks you to draw or create something, respond with BOTH:
+        `When the user asks you to draw, create a diagram, or visualize something, respond with BOTH:
 1. A brief text explanation of what you created.
-2. A JSON array of Excalidraw elements wrapped in <excalidraw-elements> tags.
+2. Mermaid diagram code wrapped in <mermaid-diagram> tags.
 
-Each element must have: type, x, y, width, height, and any type-specific properties.
-Supported types: rectangle, ellipse, diamond, text, arrow, line.
-For text elements include a "text" property. For shapes you can include "label" for text inside.
-Use strokeColor "#e8e5e0" and backgroundColor "transparent" by default.
-Keep coordinates relative starting near (0, 0) — they will be offset automatically.
+Use standard Mermaid syntax. Supported diagram types: flowchart (graph), sequence, class, state, ER, pie, gantt, journey, mindmap, timeline, etc.
+Prefer flowchart (graph TD or graph LR) for general diagrams, architecture, and process flows.
 
 Example:
-<excalidraw-elements>
-[{"type":"rectangle","x":0,"y":0,"width":200,"height":80,"strokeColor":"#e8e5e0","backgroundColor":"transparent","label":"Start"},{"type":"arrow","x":100,"y":80,"width":0,"height":60,"strokeColor":"#e8e5e0","points":[[0,0],[0,60]]}]
-</excalidraw-elements>
+<mermaid-diagram>
+flowchart TD
+    A[Start] --> B{Decision}
+    B -->|Yes| C[Action 1]
+    B -->|No| D[Action 2]
+    C --> E[End]
+    D --> E
+</mermaid-diagram>
 
-If the user is NOT asking you to draw something, just respond with helpful text — no elements needed.`
+Important:
+- Use clear, descriptive node labels.
+- Use appropriate arrow types (-->, -->>,-.->, etc.) and labels where helpful.
+- Keep diagrams clean and well-structured.
+- For complex diagrams, use subgraphs to group related nodes.
+
+If the user is NOT asking you to draw something, just respond with helpful text — no diagram needed.
+If the user asks for Mermaid code specifically, provide ONLY the mermaid code as a fenced code block in your text response (do NOT wrap it in <mermaid-diagram> tags), so they can copy it.`
       );
     }
 
@@ -205,16 +214,16 @@ If the user is NOT asking you to write code, just respond with helpful text — 
 
     if (editorType === "excalidraw") {
       const match = text.match(
-        /<excalidraw-elements>([\s\S]*?)<\/excalidraw-elements>/,
+        /<mermaid-diagram>([\s\S]*?)<\/mermaid-diagram>/,
       );
       if (match) {
         const message = text
-          .replace(/<excalidraw-elements>[\s\S]*?<\/excalidraw-elements>/, "")
+          .replace(/<mermaid-diagram>[\s\S]*?<\/mermaid-diagram>/, "")
           .trim();
         return {
-          message: message || "Here are the elements I created.",
+          message: message || "Here's the diagram I created.",
           content: match[1].trim(),
-          contentType: "excalidraw-json",
+          contentType: "excalidraw-mermaid",
         };
       }
     }

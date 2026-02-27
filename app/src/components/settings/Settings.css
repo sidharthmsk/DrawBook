@@ -1,0 +1,440 @@
+/* Settings Page - extracted from index.css */
+
+/* ─── Settings Page ─── */
+
+.settings-page {
+  width: 100%;
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 16px 0 80px;
+  position: relative;
+  box-sizing: border-box;
+}
+
+.settings-page__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 28px;
+}
+
+.settings-page__header h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.settings-close-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+}
+
+.settings-close-btn:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.settings-error {
+  background: var(--danger-muted);
+  color: var(--danger);
+  border: 1px solid rgba(217, 79, 79, 0.25);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 20px;
+}
+
+.settings-success {
+  background: rgba(92, 184, 138, 0.1);
+  color: var(--success);
+  border: 1px solid rgba(92, 184, 138, 0.25);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 20px;
+}
+
+.settings-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.settings-section {
+  background: var(--bg-surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+}
+
+.settings-section__title {
+  margin: 0 0 16px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-section__title svg {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.settings-field {
+  margin-bottom: 14px;
+}
+
+.settings-field:last-child {
+  margin-bottom: 0;
+}
+
+.settings-field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.settings-field input[type="text"],
+.settings-field input[type="password"] {
+  width: 100%;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 9px 12px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.settings-field input[type="text"]:focus,
+.settings-field input[type="password"]:focus {
+  border-color: var(--accent);
+}
+
+.settings-field input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.settings-field__hint {
+  display: block;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 5px;
+  line-height: 1.4;
+}
+
+.settings-field__hint a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.settings-field__hint a:hover {
+  text-decoration: underline;
+}
+
+.settings-field__hint--inline {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.settings-field__optional {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.settings-field__badge {
+  display: inline-block;
+  background: rgba(92, 184, 138, 0.12);
+  color: var(--success);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 99px;
+  margin-left: 8px;
+  vertical-align: middle;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.settings-field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.settings-field-row .settings-field {
+  margin-bottom: 0;
+}
+
+/* Toggle switch */
+.settings-field--toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-field--toggle .settings-field__info {
+  flex: 1;
+}
+
+.settings-field--toggle .settings-field__info label {
+  margin-bottom: 2px;
+}
+
+.settings-toggle {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  border: none;
+  border-radius: 12px;
+  background: var(--bg-surface-3);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background var(--transition-fast);
+}
+
+.settings-toggle--on {
+  background: var(--accent);
+}
+
+.settings-toggle__thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  transition: transform var(--transition-fast);
+  pointer-events: none;
+}
+
+.settings-toggle--on .settings-toggle__thumb {
+  transform: translateX(20px);
+  background: var(--text-on-accent);
+}
+
+/* Radio group */
+.settings-radio-group {
+  display: flex;
+  gap: 10px;
+}
+
+.settings-radio {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: all var(--transition-fast);
+}
+
+.settings-radio:hover {
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+
+.settings-radio--active {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+  color: var(--text-primary);
+}
+
+.settings-radio input[type="radio"] {
+  display: none;
+}
+
+.settings-radio__dot {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--border-default);
+  flex-shrink: 0;
+  position: relative;
+  transition: border-color var(--transition-fast);
+}
+
+.settings-radio--active .settings-radio__dot {
+  border-color: var(--accent);
+}
+
+.settings-radio--active .settings-radio__dot::after {
+  content: '';
+  display: block;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.settings-minio-fields {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* Password group */
+.settings-password-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-password-group .settings-field {
+  margin-bottom: 0;
+}
+
+.settings-password-btn {
+  align-self: flex-start;
+}
+
+/* Actions bar */
+.settings-actions {
+  margin-top: 24px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.settings-save-btn {
+  min-width: 140px;
+  justify-content: center;
+}
+
+.settings-save-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.settings-actions__hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.settings-templates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-template-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.settings-template-item__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-template-item__name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-template-item__meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.settings-template-item__actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Restart overlay */
+.settings-restart-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(10, 10, 10, 0.85);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-restart-overlay__content {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-restart-overlay__content p {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.settings-restart-overlay__hint {
+  font-size: 13px !important;
+  font-weight: 400 !important;
+  color: var(--text-secondary) !important;
+}
+
+/* Mobile */
+@media (max-width: 640px) {
+  .settings-page {
+    padding: 12px 0 80px;
+  }
+
+  .settings-field-row {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-radio-group {
+    flex-direction: column;
+  }
+}

@@ -1,92 +1,17 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useConfirm } from "./ConfirmDialog";
-
-interface DocumentItem {
-  id: string;
-  name: string;
-  folderId: string | null;
-  modifiedAt: string;
-}
-
-interface Folder {
-  id: string;
-  name: string;
-  createdAt: string;
-}
-
-type RenameTarget = { id: string; kind: "doc" | "folder" } | null;
-
-const IconFolder = () => (
-  <svg
-    className="folder-icon"
-    width="16"
-    height="16"
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M2 4.5A1.5 1.5 0 013.5 3h2.382a1 1 0 01.894.553L7.5 5h5A1.5 1.5 0 0114 6.5v5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5v-7z" />
-  </svg>
-);
-
-const IconSearch = () => (
-  <svg
-    className="search-icon"
-    width="15"
-    height="15"
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <circle cx="7" cy="7" r="4.5" />
-    <path d="M10.5 10.5L14 14" />
-  </svg>
-);
-
-const IconPlus = () => (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-  >
-    <path d="M8 3v10M3 8h10" />
-  </svg>
-);
-
-const IconDots = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-    <circle cx="8" cy="3.5" r="1.25" />
-    <circle cx="8" cy="8" r="1.25" />
-    <circle cx="8" cy="12.5" r="1.25" />
-  </svg>
-);
-
-const IconDoc = () => (
-  <svg
-    className="doc-icon"
-    width="14"
-    height="14"
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M4 2h5.5L13 5.5V13a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" />
-    <path d="M9 2v4h4" />
-  </svg>
-);
+import { SidebarDocItem } from "./sidebar/SidebarDocItem";
+import {
+  IconDots,
+  IconFolder,
+  IconPlus,
+  IconSearch,
+} from "./sidebar/SidebarIcons";
+import type {
+  DocumentItem,
+  Folder,
+  RenameTarget,
+} from "./sidebar/sidebarTypes";
 
 interface SidebarProps {
   currentDocId: string;
@@ -309,99 +234,24 @@ export function Sidebar({ currentDocId, open }: SidebarProps) {
     return date.toLocaleDateString();
   };
 
-  const renderDocItem = (doc: DocumentItem) => {
-    const isActive = doc.id === currentDocId;
-    const isRenaming =
-      renameTarget?.id === doc.id && renameTarget.kind === "doc";
-
-    return (
-      <div
-        key={doc.id}
-        className={`sidebar-doc-item ${isActive ? "sidebar-doc-item--active" : ""}`}
-        draggable
-        onDragStart={(e) => {
-          setDraggingDocId(doc.id);
-          e.dataTransfer.setData("text/plain", doc.id);
-        }}
-        onDragEnd={() => setDraggingDocId(null)}
-      >
-        <div className="sidebar-doc-row">
-          {isRenaming ? (
-            <input
-              className="rename-input"
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              onBlur={finishRename}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") finishRename();
-                if (e.key === "Escape") setRenameTarget(null);
-              }}
-              autoFocus
-            />
-          ) : (
-            <button
-              className="sidebar-doc-link"
-              onClick={() => openDoc(doc.id)}
-            >
-              <IconDoc />
-              <span className="sidebar-doc-name">{doc.name}</span>
-              <span className="sidebar-doc-date">
-                {formatDate(doc.modifiedAt)}
-              </span>
-            </button>
-          )}
-          <button
-            className="icon-menu-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              const menuId = `doc-${doc.id}`;
-              setOpenMenuId((current) => (current === menuId ? null : menuId));
-              setMoveMenuDocId(null);
-            }}
-            aria-label={`Actions for ${doc.name}`}
-          >
-            <IconDots />
-          </button>
-        </div>
-
-        {openMenuId === `doc-${doc.id}` && (
-          <div className="dropdown-menu" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => openDoc(doc.id)}>Open</button>
-            <button onClick={() => startRename(doc.id, "doc", doc.name)}>
-              Rename
-            </button>
-            <button
-              onClick={() =>
-                setMoveMenuDocId((current) =>
-                  current === doc.id ? null : doc.id,
-                )
-              }
-            >
-              Move to...
-            </button>
-            <button className="danger" onClick={() => deleteDoc(doc.id)}>
-              Delete
-            </button>
-
-            {moveMenuDocId === doc.id && (
-              <div className="dropdown-submenu">
-                <button onClick={() => moveDocToFolder(doc.id, null)}>
-                  Root
-                </button>
-                {folders.map((folder) => (
-                  <button
-                    key={folder.id}
-                    onClick={() => moveDocToFolder(doc.id, folder.id)}
-                  >
-                    {folder.name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    );
+  const docItemProps = {
+    currentDocId,
+    formatDate,
+    renameTarget,
+    renameValue,
+    setRenameValue,
+    finishRename,
+    setRenameTarget,
+    openMenuId,
+    setOpenMenuId,
+    moveMenuDocId,
+    setMoveMenuDocId,
+    openDoc,
+    startRename,
+    deleteDoc,
+    moveDocToFolder,
+    folders,
+    setDraggingDocId,
   };
 
   return (
@@ -448,7 +298,9 @@ export function Sidebar({ currentDocId, open }: SidebarProps) {
                     if (droppedDoc) moveDocToFolder(droppedDoc, null);
                   }}
                 >
-                  {unfiledDocs.map(renderDocItem)}
+                  {unfiledDocs.map((doc) => (
+                    <SidebarDocItem key={doc.id} doc={doc} {...docItemProps} />
+                  ))}
                 </div>
               </div>
             )}
@@ -544,7 +396,13 @@ export function Sidebar({ currentDocId, open }: SidebarProps) {
 
                         {isExpanded && folderDocs.length > 0 && (
                           <div className="sidebar-folder-docs">
-                            {folderDocs.map(renderDocItem)}
+                            {folderDocs.map((doc) => (
+                              <SidebarDocItem
+                                key={doc.id}
+                                doc={doc}
+                                {...docItemProps}
+                              />
+                            ))}
                           </div>
                         )}
                       </div>

@@ -1,0 +1,122 @@
+/* Flowchart Panel - extracted from index.css */
+
+/* ── Flowchart Panel ── */
+
+.flowchart-panel {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 320px;
+  max-height: 420px;
+  background: var(--bg-surface-1);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.flowchart-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.flowchart-panel__header h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.flowchart-panel__close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.flowchart-panel__close:hover {
+  color: var(--text-primary);
+}
+.flowchart-panel__hint {
+  padding: 8px 14px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin: 0;
+  line-height: 1.5;
+}
+.flowchart-panel__list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 10px;
+}
+.flowchart-panel__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.1s;
+  font-size: 13px;
+}
+.flowchart-panel__item:hover {
+  background: var(--bg-surface-2);
+}
+.flowchart-panel__item input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+.flowchart-panel__name {
+  flex: 1;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.flowchart-panel__type {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.flowchart-panel__empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+.flowchart-panel__generate {
+  margin: 10px 14px;
+  padding: 8px 16px;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.flowchart-panel__generate:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.flowchart-panel__generate:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ─── Flowchart Panel Mobile Overlay ─── */
+.flowchart-panel--mobile-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  border-radius: 0;
+  max-height: none;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}

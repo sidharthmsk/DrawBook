@@ -1,0 +1,479 @@
+/* Editor Shell - extracted from index.css */
+
+/* ─── Editor Wrapper ─── */
+.editor-wrapper {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-base);
+}
+
+.editor-wrapper--mobile-immersive {
+  background: transparent;
+}
+
+.excalidraw-mobile-host {
+  width: 100%;
+  height: 100dvh;
+  background: var(--bg-base);
+}
+
+/* Match standalone mobile feel: keep bottom tools, hide top corner controls */
+.excalidraw-mobile-host .App-menu_top,
+.excalidraw-mobile-host .layer-ui__wrapper__top-right,
+.excalidraw-mobile-host .sidebar-trigger,
+.excalidraw-mobile-host .library-menu-trigger {
+  display: none !important;
+}
+
+.editor-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--bg-surface-1);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  z-index: 100;
+  min-height: 44px;
+}
+
+.editor-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface-2);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 12px;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.editor-back-btn:hover {
+  background: var(--bg-surface-3);
+  color: var(--text-primary);
+}
+
+.editor-topbar__title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  cursor: default;
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  margin: -2px -6px;
+  transition: background var(--transition-fast);
+}
+
+.editor-topbar__title:hover {
+  background: var(--bg-surface-3);
+  color: var(--text-secondary);
+}
+
+.editor-topbar__title-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.editor-topbar__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.editor-topbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.editor-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.editor-status-dot--saved {
+  background: var(--success);
+  box-shadow: 0 0 6px rgba(92, 184, 138, 0.5);
+}
+
+.editor-status-dot--saving {
+  background: #E8A849;
+  box-shadow: 0 0 6px rgba(232, 168, 73, 0.5);
+  animation: pulse 1.2s ease infinite;
+}
+
+.editor-status-dot--error {
+  background: var(--danger);
+  box-shadow: 0 0 6px rgba(217, 79, 79, 0.5);
+}
+
+.editor-canvas {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ─── Editor Mode Toggle (Markdown) ─── */
+.editor-mode-btn {
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface-2);
+  color: var(--text-tertiary);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 500;
+  transition: all var(--transition-fast);
+}
+
+.editor-mode-btn:first-child {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  border-right: none;
+}
+
+.editor-mode-btn:last-child {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.editor-mode-btn.active {
+  background: var(--accent-muted);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.editor-mode-btn:hover:not(.active) {
+  background: var(--bg-surface-3);
+  color: var(--text-secondary);
+}
+
+/* ─── Editor Loading State ─── */
+.editor-loading {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: 14px;
+}
+
+.editor-loading__spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border-default);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin-right: 12px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ─── Editor Content Layout (flex row for AI panel) ─── */
+.editor-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.editor-content > .editor-canvas,
+.editor-content > .markdown-container,
+.editor-content > .code-editor {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  height: 100%;
+}
+.editor-content > .kanban-board-wrapper {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ─── Editor Topbar Right Group ─── */
+.editor-topbar__right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* ─── Editor Info Bar ─── */
+.editor-info-bar {
+  display: flex;
+  gap: 16px;
+  padding: 6px 16px;
+  background: var(--bg-surface-1);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+.editor-info-bar strong {
+  color: var(--text-primary);
+  margin-right: 4px;
+}
+
+/* ─── Editor Export Button ─── */
+.editor-export-btn--active {
+  color: var(--accent);
+}
+.editor-export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.editor-export-btn:hover {
+  background: var(--bg-surface-3);
+  color: var(--text-primary);
+}
+
+.export-format-select {
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* ─── Tldraw Theme Toggle ─── */
+.tldraw-theme-toggle {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 100;
+}
+.tldraw-theme-toggle__btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(0,0,0,0.3);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+.tldraw-theme-toggle__btn:hover {
+  background: rgba(0,0,0,0.5);
+}
+
+/* ─── Breadcrumbs ─── */
+.editor-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  margin-right: 4px;
+}
+.editor-breadcrumbs__link {
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+.editor-breadcrumbs__link:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+.editor-breadcrumbs__sep {
+  color: var(--text-secondary);
+  margin: 0 2px;
+}
+
+/* ─── Version History Bar ─── */
+.editor-version-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  align-items: center;
+}
+.editor-version-bar__empty {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+.editor-version-bar__list {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.editor-version-bar__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.editor-version-bar__restore {
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+}
+.editor-version-bar__restore:hover { background: var(--accent); color: white; }
+
+/* ─── Editor Topbar Button ─── */
+.editor-topbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.editor-topbar-btn:hover { background: var(--hover); color: var(--text); }
+.editor-topbar-btn--active { background: var(--hover); color: var(--accent); }
+
+/* ─── Mobile Overflow Menu ─── */
+.mobile-overflow {
+  position: relative;
+}
+.mobile-overflow__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface-2);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.mobile-overflow__trigger:hover {
+  background: var(--bg-surface-3);
+  color: var(--text-primary);
+}
+.mobile-overflow__menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  padding: 4px;
+  z-index: 200;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mobile-overflow__menu > button,
+.mobile-overflow__menu > .editor-export-btn,
+.mobile-overflow__menu > .editor-topbar-btn,
+.mobile-overflow__menu > .editor-task-popover-wrapper > button {
+  width: 100%;
+  justify-content: flex-start;
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+.mobile-overflow__menu .export-format-select {
+  width: 100%;
+  padding: 6px 8px;
+  margin: 2px 0;
+}
+
+/* ─── Mobile Phone Media Queries (EditorShell-specific) ─── */
+@media (max-width: 640px) {
+  .editor-topbar {
+    gap: 6px;
+    padding: 6px 10px;
+    min-height: 40px;
+  }
+  .editor-topbar__btn-label {
+    display: none;
+  }
+  .editor-back-btn {
+    padding: 5px 6px;
+  }
+  .editor-topbar__status-label {
+    display: none;
+  }
+  .editor-topbar__right {
+    gap: 6px;
+  }
+  .editor-info-bar {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 10px;
+    font-size: 11px;
+  }
+  .editor-version-bar {
+    padding: 8px 10px;
+  }
+}

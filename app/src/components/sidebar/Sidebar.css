@@ -1,0 +1,376 @@
+/* Sidebar styles - extracted from index.css */
+
+/* ─── Dashboard Sidebar ─── */
+.dashboard-sidebar {
+  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-surface-1);
+  padding: 20px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  z-index: 30;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 40;
+  transition: background var(--transition-fast);
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:active {
+  background: var(--accent);
+  opacity: 0.5;
+}
+
+.dashboard-sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.dashboard-sidebar::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 4px;
+}
+
+.dashboard-sidebar__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.dashboard-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dashboard-brand h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  color: var(--text-primary);
+}
+
+.dashboard-brand__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 12px rgba(224, 122, 95, 0.6);
+  flex-shrink: 0;
+}
+
+/* ─── Sidebar Navigation ─── */
+.sidebar-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--text-tertiary);
+  padding: 16px 10px 6px;
+  margin: 0;
+}
+
+.sidebar-section-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sidebar-section-row .sidebar-section-label {
+  padding-right: 0;
+}
+
+.sidebar-add-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  margin-top: 10px;
+  margin-right: 6px;
+}
+
+.sidebar-add-btn:hover {
+  background: var(--bg-surface-3);
+  color: var(--text-primary);
+}
+
+.new-folder-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-right: 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-2);
+}
+
+.new-folder-inline .folder-icon {
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+.new-folder-inline input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 13px;
+  outline: none;
+  padding: 0;
+}
+
+.folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-height: 0;
+}
+
+.folder-item {
+  border-radius: var(--radius-md);
+  position: relative;
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.folder-row .folder-link {
+  flex: 1;
+  min-width: 0;
+}
+
+.folder-link {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: var(--font-body);
+  transition: all var(--transition-fast);
+  gap: 8px;
+}
+
+.folder-link:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.folder-link.active,
+.folder-item.active .folder-link {
+  background: var(--accent-muted);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.folder-item.active {
+  background: transparent;
+}
+
+.folder-link .folder-icon {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.folder-link.active .folder-icon,
+.folder-item.active .folder-link .folder-icon {
+  opacity: 1;
+}
+
+.folder-link-text {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  min-width: 18px;
+  text-align: right;
+}
+
+.folder-link.active .folder-count,
+.folder-item.active .folder-link .folder-count {
+  color: var(--accent);
+  opacity: 0.6;
+}
+
+.folder-link.drop-target {
+  transition: box-shadow var(--transition-fast);
+}
+
+.folder-link.drop-target:hover {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* ─── Tree Toggle ─── */
+.tree-toggle {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--transition-fast);
+}
+
+.tree-toggle:hover {
+  background: var(--bg-surface-3);
+  color: var(--text-secondary);
+}
+
+.tree-chevron {
+  transition: transform var(--transition-fast);
+}
+
+.tree-chevron--open {
+  transform: rotate(90deg);
+}
+
+.folder-row .tree-toggle + .folder-link {
+  padding-left: 4px;
+}
+
+/* ─── Rename Input ─── */
+.rename-input {
+  width: 100%;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.rename-input:focus {
+  border-color: var(--accent);
+}
+
+/* ─── Sidebar Menus (icon-menu-btn used for folder/doc menu buttons) ─── */
+.icon-menu-btn {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.icon-menu-btn:hover {
+  background: var(--bg-surface-3);
+  color: var(--text-secondary);
+}
+
+.sidebar-close-btn {
+  display: none;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface-2);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 12px;
+}
+
+/* ─── Sidebar Backdrop (mobile) ─── */
+.sidebar-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+  z-index: 25;
+  animation: fade-in 200ms ease;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ─── Trash Link ─── */
+.trash-link {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px !important;
+}
+
+/* ─── Sidebar Responsive Media Queries ─── */
+@media (max-width: 900px) {
+  .dashboard-sidebar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 30;
+    transform: translateX(-100%);
+    transition: transform var(--transition-slow);
+    width: min(88vw, 300px) !important;
+    min-width: min(88vw, 300px) !important;
+  }
+
+  .sidebar-resize-handle {
+    display: none;
+  }
+
+  .dashboard-sidebar.open {
+    transform: translateX(0);
+  }
+
+  .sidebar-close-btn {
+    display: inline-flex;
+  }
+}

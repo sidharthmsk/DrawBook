@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-
 interface ShareLink {
   id: string;
   token: string;
