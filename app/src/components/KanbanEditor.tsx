@@ -430,6 +430,13 @@ function SortableCard({
 }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(card.title);
+  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (clickTimer.current) clearTimeout(clickTimer.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (autoEdit) {
@@ -462,6 +469,22 @@ function SortableCard({
     }
   };
 
+  const handleCardClick = () => {
+    if (clickTimer.current) clearTimeout(clickTimer.current);
+    clickTimer.current = setTimeout(() => {
+      onOpenDetail(card);
+    }, 250);
+  };
+
+  const handleTitleDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (clickTimer.current) {
+      clearTimeout(clickTimer.current);
+      clickTimer.current = null;
+    }
+    setEditing(true);
+  };
+
   return (
     <div
       ref={setNodeRef}
@@ -469,7 +492,7 @@ function SortableCard({
       className="kanban-card"
       {...attributes}
       {...listeners}
-      onClick={() => onOpenDetail(card)}
+      onClick={handleCardClick}
     >
       <div className="kanban-card__drag">
         <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
@@ -501,10 +524,7 @@ function SortableCard({
         ) : (
           <span
             className="kanban-card__title"
-            onDoubleClick={(e) => {
-              e.stopPropagation();
-              setEditing(true);
-            }}
+            onDoubleClick={handleTitleDoubleClick}
           >
             {card.title}
           </span>

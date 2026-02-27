@@ -646,9 +646,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
   const [draggingDocId, setDraggingDocId] = useState<string | null>(null);
   const [showTrash, setShowTrash] = useState(false);
   const [showLinkGraph, setShowLinkGraph] = useState(false);
-  const [showTemplates, setShowTemplates] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [obsidianImportOpen, setObsidianImportOpen] = useState(false);
   const [fleetingOpen, setFleetingOpen] = useState(false);
   const [fleetingNotes, setFleetingNotes] = useState<
     Array<{
@@ -661,12 +659,6 @@ export function Dashboard({ config }: { config: AppConfig }) {
   >([]);
   const [fleetingInput, setFleetingInput] = useState("");
   const [fleetingTypeMenu, setFleetingTypeMenu] = useState<string | null>(null);
-  const [obsidianImporting, setObsidianImporting] = useState(false);
-  const [obsidianImportResult, setObsidianImportResult] = useState<{
-    imported: number;
-    skipped: number;
-    folders: number;
-  } | null>(null);
   const [templates, setTemplates] = useState<
     Array<{
       id: string;
@@ -948,41 +940,6 @@ export function Dashboard({ config }: { config: AppConfig }) {
     }
 
     if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  const handleObsidianImport = async (
-    e: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setObsidianImporting(true);
-    setObsidianImportResult(null);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      if (currentFolder) formData.append("folderId", currentFolder);
-      const res = await fetch("/api/import/obsidian", {
-        method: "POST",
-        body: formData,
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Import failed");
-      }
-      const data = await res.json();
-      setObsidianImportResult({
-        imported: data.imported,
-        skipped: data.skipped,
-        folders: data.folders,
-      });
-      await loadData();
-    } catch (err) {
-      console.error("Obsidian import failed:", err);
-      setObsidianImportResult(null);
-    } finally {
-      setObsidianImporting(false);
-    }
-    if (e.target) e.target.value = "";
   };
 
   const currentFolderName = useMemo(() => {
@@ -1711,7 +1668,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
             setCurrentFolder(null);
             setShowTrash(false);
             setShowLinkGraph(false);
-            setShowTemplates(false);
+
             setShowSettings(false);
             setSidebarOpen(false);
           }}
@@ -1855,7 +1812,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
                           setCurrentFolder(folder.id);
                           setShowTrash(false);
                           setShowLinkGraph(false);
-                          setShowTemplates(false);
+
                           setShowSettings(false);
                           setSidebarOpen(false);
                         }}
@@ -1949,7 +1906,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
           className={`folder-link trash-link${showTrash ? " active" : ""}`}
           onClick={() => {
             setShowTrash(true);
-            setShowTemplates(false);
+
             setShowLinkGraph(false);
             setShowSettings(false);
             setCurrentFolder(null);
@@ -1976,7 +1933,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
             onClick={() => {
               setShowLinkGraph(true);
               setShowTrash(false);
-              setShowTemplates(false);
+
               setShowSettings(false);
             }}
           >
@@ -1999,37 +1956,11 @@ export function Dashboard({ config }: { config: AppConfig }) {
           </button>
         )}
         <button
-          className={`folder-link trash-link${showTemplates ? " active" : ""}`}
-          onClick={() => {
-            setShowTemplates(true);
-            setShowTrash(false);
-            setShowLinkGraph(false);
-            setShowSettings(false);
-            loadTemplates();
-          }}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <rect x="2" y="2" width="12" height="12" rx="1" />
-            <path d="M5 2v5l2.5-1.5L10 7V2" />
-          </svg>
-          <span>Templates</span>
-        </button>
-        <button
           className={`folder-link trash-link${showSettings ? " active" : ""}`}
           onClick={() => {
             setShowSettings(true);
             setShowTrash(false);
             setShowLinkGraph(false);
-            setShowTemplates(false);
           }}
         >
           <svg
@@ -2071,7 +2002,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
                   setSearchTerm(e.target.value);
                   setShowTrash(false);
                   setShowLinkGraph(false);
-                  setShowTemplates(false);
+
                   setShowSettings(false);
                   doContentSearch(e.target.value);
                 }}
@@ -2192,28 +2123,6 @@ export function Dashboard({ config }: { config: AppConfig }) {
               onChange={handleFileUpload}
             />
 
-            <button
-              className="icon-action-btn"
-              onClick={() => {
-                setObsidianImportOpen(true);
-                setObsidianImportResult(null);
-              }}
-              title="Import Obsidian Vault"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M9 2L5 14M7 3l4 2-2 4 4 2" />
-              </svg>
-            </button>
-
             <div className="new-dropdown-wrapper">
               <button
                 className="primary-btn"
@@ -2319,73 +2228,6 @@ export function Dashboard({ config }: { config: AppConfig }) {
           />
         ) : showLinkGraph && config.enableLinking ? (
           <LinkGraph onClose={() => setShowLinkGraph(false)} />
-        ) : showTemplates ? (
-          <section className="templates-view">
-            <div className="templates-view__header">
-              <h3>Templates</h3>
-              <span className="templates-view__hint">
-                Save any document as a template from the editor toolbar
-              </span>
-            </div>
-            {templates.length === 0 ? (
-              <div className="empty-state">
-                <p>No templates yet</p>
-                <p style={{ fontSize: 13, color: "var(--text-tertiary)" }}>
-                  Open a document and click the Template button in the toolbar
-                  to save it as a reusable template.
-                </p>
-              </div>
-            ) : (
-              <div className="templates-view__grid">
-                {templates.map((tpl) => {
-                  const typeConf =
-                    TYPE_CONFIG[tpl.type as DocumentType] || TYPE_CONFIG.tldraw;
-                  const TypeIcon =
-                    TYPE_ICONS[tpl.type as DocumentType] || TYPE_ICONS.tldraw;
-                  return (
-                    <div
-                      key={tpl.id}
-                      className="templates-view__card"
-                      style={{ borderTopColor: typeConf.color }}
-                    >
-                      <div
-                        className="templates-view__card-icon"
-                        style={{ color: typeConf.color }}
-                      >
-                        <TypeIcon />
-                      </div>
-                      <span className="templates-view__card-name">
-                        {tpl.name}
-                      </span>
-                      <span
-                        className="templates-view__card-type"
-                        style={{ color: typeConf.color }}
-                      >
-                        {typeConf.label}
-                      </span>
-                      <span className="templates-view__card-date">
-                        {new Date(tpl.createdAt).toLocaleDateString()}
-                      </span>
-                      <div className="templates-view__card-actions">
-                        <button
-                          className="templates-view__use-btn"
-                          onClick={() => useTemplate(tpl.id)}
-                        >
-                          Use
-                        </button>
-                        <button
-                          className="templates-view__delete-btn"
-                          onClick={() => deleteTemplate(tpl.id)}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
         ) : showTrash ? (
           <section className="trash-view">
             <div className="trash-view__header">
@@ -3408,174 +3250,6 @@ export function Dashboard({ config }: { config: AppConfig }) {
                 </button>
               );
             })}
-          </div>
-        </div>
-      )}
-
-      {obsidianImportOpen && (
-        <div
-          className="quick-switcher-overlay"
-          onClick={() => !obsidianImporting && setObsidianImportOpen(false)}
-        >
-          <div
-            className="obsidian-import-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              className="kanban-detail__close"
-              onClick={() => setObsidianImportOpen(false)}
-              disabled={obsidianImporting}
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-              >
-                <path d="M4 4l8 8M12 4l-8 8" />
-              </svg>
-            </button>
-
-            <h3 className="obsidian-import-modal__title">
-              Import Obsidian Vault
-            </h3>
-
-            <div className="obsidian-import-modal__steps">
-              <p className="obsidian-import-modal__subtitle">
-                How to export from Obsidian:
-              </p>
-              <ol className="obsidian-import-modal__list">
-                <li>
-                  Open your vault folder in your file manager
-                  <ul>
-                    <li>
-                      <strong>Mac:</strong> Right-click vault in Finder
-                    </li>
-                    <li>
-                      <strong>Windows:</strong> Right-click vault folder in
-                      Explorer
-                    </li>
-                    <li>
-                      <strong>Linux:</strong> Right-click vault directory
-                    </li>
-                  </ul>
-                </li>
-                <li>
-                  <strong>Compress / zip</strong> the entire vault folder
-                  <ul>
-                    <li>Mac: "Compress" from right-click menu</li>
-                    <li>
-                      Windows: "Send to &rarr; Compressed (zipped) folder"
-                    </li>
-                  </ul>
-                </li>
-                <li>
-                  Upload the resulting <code>.zip</code> file below
-                </li>
-              </ol>
-
-              <div className="obsidian-import-modal__info">
-                <strong>What gets imported:</strong>
-                <ul>
-                  <li>
-                    All <code>.md</code> files as Markdown documents
-                  </li>
-                  <li>
-                    Obsidian <code>[[wikilinks]]</code> are preserved and work
-                    with Drawbook's linking system
-                  </li>
-                  <li>Folder structure is recreated</li>
-                  <li>PDFs and CSVs are imported too</li>
-                  <li>
-                    <code>.obsidian/</code> config and images/attachments are
-                    skipped
-                  </li>
-                </ul>
-              </div>
-            </div>
-
-            {obsidianImportResult ? (
-              <div className="obsidian-import-modal__result">
-                <div className="obsidian-import-modal__result-icon">
-                  <svg
-                    width="32"
-                    height="32"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="var(--accent)"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                    <polyline points="22 4 12 14.01 9 11.01" />
-                  </svg>
-                </div>
-                <p className="obsidian-import-modal__result-text">
-                  Import complete!
-                </p>
-                <div className="obsidian-import-modal__result-stats">
-                  <span>
-                    {obsidianImportResult.imported} documents imported
-                  </span>
-                  <span>{obsidianImportResult.folders} folders created</span>
-                  {obsidianImportResult.skipped > 0 && (
-                    <span>{obsidianImportResult.skipped} files skipped</span>
-                  )}
-                </div>
-                <button
-                  className="obsidian-import-modal__done-btn"
-                  onClick={() => {
-                    setObsidianImportOpen(false);
-                    setObsidianImportResult(null);
-                  }}
-                >
-                  Done
-                </button>
-              </div>
-            ) : (
-              <label
-                className={`obsidian-import-modal__dropzone${obsidianImporting ? " obsidian-import-modal__dropzone--loading" : ""}`}
-              >
-                <input
-                  type="file"
-                  accept=".zip"
-                  style={{ display: "none" }}
-                  onChange={handleObsidianImport}
-                  disabled={obsidianImporting}
-                />
-                {obsidianImporting ? (
-                  <>
-                    <span className="obsidian-import-modal__spinner" />
-                    <span>Importing vault...</span>
-                  </>
-                ) : (
-                  <>
-                    <svg
-                      width="32"
-                      height="32"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="17 8 12 3 7 8" />
-                      <line x1="12" y1="3" x2="12" y2="15" />
-                    </svg>
-                    <span>Click to select your vault .zip file</span>
-                    <span className="obsidian-import-modal__hint">
-                      Max 50 MB
-                    </span>
-                  </>
-                )}
-              </label>
-            )}
           </div>
         </div>
       )}

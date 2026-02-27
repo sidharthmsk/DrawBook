@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface SettingsData {
   appPassword: string;
@@ -52,6 +52,19 @@ export function SettingsPage({
 
   const [dirty, setDirty] = useState(false);
   const [passwordDirty, setPasswordDirty] = useState(false);
+
+  const [obsidianImporting, setObsidianImporting] = useState(false);
+  const [obsidianImportResult, setObsidianImportResult] = useState<{
+    imported: number;
+    skipped: number;
+    folders: number;
+  } | null>(null);
+  const obsidianFileRef = useRef<HTMLInputElement>(null);
+
+  const [templates, setTemplates] = useState<
+    Array<{ id: string; name: string; type: string; createdAt: string }>
+  >([]);
+  const [templatesLoaded, setTemplatesLoaded] = useState(false);
 
   const loadSettings = useCallback(async () => {
     try {
@@ -201,6 +214,78 @@ export function SettingsPage({
   };
 
   const markDirty = () => setDirty(true);
+
+  const handleObsidianImport = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setObsidianImporting(true);
+    setObsidianImportResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/import/obsidian", {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Import failed");
+      }
+      const data = await res.json();
+      setObsidianImportResult({
+        imported: data.imported,
+        skipped: data.skipped,
+        folders: data.folders,
+      });
+    } catch (err) {
+      console.error("Obsidian import failed:", err);
+      setObsidianImportResult(null);
+    } finally {
+      setObsidianImporting(false);
+    }
+    if (e.target) e.target.value = "";
+  };
+
+  const loadTemplates = useCallback(async () => {
+    try {
+      const res = await fetch("/api/templates");
+      const data = await res.json();
+      setTemplates(data.templates || []);
+      setTemplatesLoaded(true);
+    } catch (err) {
+      console.error("Failed to load templates:", err);
+    }
+  }, []);
+
+  const deleteTemplate = async (templateId: string) => {
+    if (!window.confirm("Delete this template?")) return;
+    try {
+      const res = await fetch(`/api/templates/${templateId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Delete template failed");
+      setTemplates((prev) => prev.filter((t) => t.id !== templateId));
+    } catch (err) {
+      console.error("Failed to delete template:", err);
+    }
+  };
+
+  const useTemplate = async (templateId: string) => {
+    try {
+      const res = await fetch(`/api/templates/${templateId}/use`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) throw new Error("Use template failed");
+      const data = await res.json();
+      window.location.href = `/?doc=${data.documentId}&type=${data.type}`;
+    } catch (err) {
+      console.error("Failed to use template:", err);
+    }
+  };
 
   if (loading) {
     return (
@@ -668,6 +753,179 @@ export function SettingsPage({
             </div>
           </section>
         )}
+        {/* Import */}
+        <section className="settings-section">
+          <h3 className="settings-section__title">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+            Import
+          </h3>
+
+          <div className="settings-field">
+            <div className="settings-field__info">
+              <label>Import Obsidian Vault</label>
+              <span className="settings-field__hint">
+                Zip your vault folder and upload it. Markdown files, folder
+                structure, wikilinks, PDFs, and CSVs are imported.{" "}
+                <code>.obsidian/</code> config and images are skipped.
+              </span>
+            </div>
+
+            {obsidianImportResult ? (
+              <div className="obsidian-import-modal__result">
+                <div className="obsidian-import-modal__result-icon">
+                  <svg
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="var(--accent)"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                    <polyline points="22 4 12 14.01 9 11.01" />
+                  </svg>
+                </div>
+                <p className="obsidian-import-modal__result-text">
+                  Import complete!
+                </p>
+                <div className="obsidian-import-modal__result-stats">
+                  <span>
+                    {obsidianImportResult.imported} documents imported
+                  </span>
+                  <span>{obsidianImportResult.folders} folders created</span>
+                  {obsidianImportResult.skipped > 0 && (
+                    <span>{obsidianImportResult.skipped} files skipped</span>
+                  )}
+                </div>
+                <button
+                  className="primary-btn"
+                  style={{ marginTop: 8 }}
+                  onClick={() => setObsidianImportResult(null)}
+                >
+                  Import Another
+                </button>
+              </div>
+            ) : (
+              <label
+                className={`obsidian-import-modal__dropzone${obsidianImporting ? " obsidian-import-modal__dropzone--loading" : ""}`}
+              >
+                <input
+                  ref={obsidianFileRef}
+                  type="file"
+                  accept=".zip"
+                  style={{ display: "none" }}
+                  onChange={handleObsidianImport}
+                  disabled={obsidianImporting}
+                />
+                {obsidianImporting ? (
+                  <>
+                    <span className="obsidian-import-modal__spinner" />
+                    <span>Importing vault...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg
+                      width="28"
+                      height="28"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="17 8 12 3 7 8" />
+                      <line x1="12" y1="3" x2="12" y2="15" />
+                    </svg>
+                    <span>Click to select your vault .zip file</span>
+                    <span className="obsidian-import-modal__hint">
+                      Max 50 MB
+                    </span>
+                  </>
+                )}
+              </label>
+            )}
+          </div>
+        </section>
+
+        {/* Templates */}
+        <section className="settings-section">
+          <h3 className="settings-section__title">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <path d="M7 3v8l3.5-2L14 11V3" />
+            </svg>
+            Templates
+          </h3>
+
+          {!templatesLoaded ? (
+            <button className="primary-btn" onClick={loadTemplates}>
+              Load Templates
+            </button>
+          ) : templates.length === 0 ? (
+            <p className="settings-field__hint">
+              No templates yet. Save any document as a template from the editor
+              toolbar.
+            </p>
+          ) : (
+            <div className="settings-templates-list">
+              {templates.map((tpl) => (
+                <div key={tpl.id} className="settings-template-item">
+                  <div className="settings-template-item__info">
+                    <span className="settings-template-item__name">
+                      {tpl.name}
+                    </span>
+                    <span className="settings-template-item__meta">
+                      {tpl.type} &middot;{" "}
+                      {new Date(tpl.createdAt).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <div className="settings-template-item__actions">
+                    <button
+                      className="primary-btn"
+                      style={{ padding: "4px 12px", fontSize: 12 }}
+                      onClick={() => useTemplate(tpl.id)}
+                    >
+                      Use
+                    </button>
+                    <button
+                      className="danger-btn"
+                      style={{ padding: "4px 12px", fontSize: 12 }}
+                      onClick={() => deleteTemplate(tpl.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
 
       <div className="settings-actions">
