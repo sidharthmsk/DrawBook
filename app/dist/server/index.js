@@ -4,9 +4,15 @@ import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import fs from 'fs';
+import dotenv from 'dotenv';
+import { createStorageAdapter } from './storage.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+// Load env file in both dev and production runs.
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+if (!process.env.MINIO_ENDPOINT_URL && !process.env.MINIO_ENDPOINT) {
+    dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
+}
 const app = express();
 const server = createServer(app);
 // WebSocket server for live sync
@@ -54,47 +60,24 @@ wss.on('connection', (ws, req) => {
 // CORS - open for internal network use
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
-// Data directory for persistence - use env var for Docker, fallback for dev
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../data');
-if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+const storage = createStorageAdapter();
+async function loadFolders() {
+    return storage.loadFolders();
 }
-// Metadata file paths
-const FOLDERS_FILE = path.join(DATA_DIR, '_folders.json');
-const METADATA_FILE = path.join(DATA_DIR, '_metadata.json');
-function loadFolders() {
-    try {
-        if (fs.existsSync(FOLDERS_FILE)) {
-            return JSON.parse(fs.readFileSync(FOLDERS_FILE, 'utf-8'));
-        }
-    }
-    catch (e) {
-        console.error('[Server] Error loading folders:', e);
-    }
-    return [];
+async function saveFolders(folders) {
+    await storage.saveFolders(folders);
 }
-function saveFolders(folders) {
-    fs.writeFileSync(FOLDERS_FILE, JSON.stringify(folders, null, 2));
+async function loadMetadata() {
+    return storage.loadMetadata();
 }
-function loadMetadata() {
-    try {
-        if (fs.existsSync(METADATA_FILE)) {
-            return JSON.parse(fs.readFileSync(METADATA_FILE, 'utf-8'));
-        }
-    }
-    catch (e) {
-        console.error('[Server] Error loading metadata:', e);
-    }
-    return {};
-}
-function saveMetadata(metadata) {
-    fs.writeFileSync(METADATA_FILE, JSON.stringify(metadata, null, 2));
+async function saveMetadata(metadata) {
+    await storage.saveMetadata(metadata);
 }
 // ============ FOLDER ENDPOINTS ============
 // List all folders
-app.get('/api/folders', (_req, res) => {
+app.get('/api/folders', async (_req, res) => {
     try {
-        const folders = loadFolders();
+        const folders = await loadFolders();
         res.json({ folders });
     }
     catch (error) {
@@ -103,20 +86,20 @@ app.get('/api/folders', (_req, res) => {
     }
 });
 // Create a folder
-app.post('/api/folders', (req, res) => {
+app.post('/api/folders', async (req, res) => {
     try {
         const { name } = req.body;
         if (!name) {
             return res.status(400).json({ error: 'Folder name is required' });
         }
-        const folders = loadFolders();
+        const folders = await loadFolders();
         const newFolder = {
             id: `folder-${Date.now()}`,
             name: name.trim(),
             createdAt: new Date().toISOString()
         };
         folders.push(newFolder);
-        saveFolders(folders);
+        await saveFolders(folders);
         console.log(`[Server] Created folder: ${newFolder.name}`);
         res.json({ success: true, folder: newFolder });
     }
@@ -126,20 +109,20 @@ app.post('/api/folders', (req, res) => {
     }
 });
 // Rename a folder
-app.post('/api/folders/:folderId/rename', (req, res) => {
+app.post('/api/folders/:folderId/rename', async (req, res) => {
     try {
         const { folderId } = req.params;
         const { name } = req.body;
         if (!name) {
             return res.status(400).json({ error: 'Folder name is required' });
         }
-        const folders = loadFolders();
+        const folders = await loadFolders();
         const folder = folders.find(f => f.id === folderId);
         if (!folder) {
             return res.status(404).json({ error: 'Folder not found' });
         }
         folder.name = name.trim();
-        saveFolders(folders);
+        await saveFolders(folders);
         console.log(`[Server] Renamed folder: ${folderId} -> ${name}`);
         res.json({ success: true });
     }
@@ -149,21 +132,21 @@ app.post('/api/folders/:folderId/rename', (req, res) => {
     }
 });
 // Delete a folder (moves documents to root)
-app.delete('/api/folders/:folderId', (req, res) => {
+app.delete('/api/folders/:folderId', async (req, res) => {
     try {
         const { folderId } = req.params;
         // Remove folder
-        let folders = loadFolders();
+        let folders = await loadFolders();
         folders = folders.filter(f => f.id !== folderId);
-        saveFolders(folders);
+        await saveFolders(folders);
         // Move documents from this folder to root
-        const metadata = loadMetadata();
+        const metadata = await loadMetadata();
         for (const docId of Object.keys(metadata)) {
             if (metadata[docId].folderId === folderId) {
                 metadata[docId].folderId = null;
             }
         }
-        saveMetadata(metadata);
+        await saveMetadata(metadata);
         console.log(`[Server] Deleted folder: ${folderId}`);
         res.json({ success: true });
     }
@@ -174,20 +157,19 @@ app.delete('/api/folders/:folderId', (req, res) => {
 });
 // ============ DOCUMENT ENDPOINTS ============
 // Save document endpoint
-app.post('/api/save/:documentId', (req, res) => {
+app.post('/api/save/:documentId', async (req, res) => {
     try {
         const { documentId } = req.params;
         const { snapshot, folderId } = req.body;
         if (!snapshot) {
             return res.status(400).json({ error: 'Snapshot is required' });
         }
-        const filePath = path.join(DATA_DIR, `${documentId}.json`);
-        fs.writeFileSync(filePath, JSON.stringify(snapshot, null, 2));
+        await storage.saveDocument(documentId, snapshot);
         // Update metadata if folderId is provided
         if (folderId !== undefined) {
-            const metadata = loadMetadata();
+            const metadata = await loadMetadata();
             metadata[documentId] = { ...metadata[documentId], folderId };
-            saveMetadata(metadata);
+            await saveMetadata(metadata);
         }
         console.log(`[Server] Saved document: ${documentId}`);
         res.json({ success: true });
@@ -198,14 +180,12 @@ app.post('/api/save/:documentId', (req, res) => {
     }
 });
 // Load document endpoint
-app.get('/api/load/:documentId', (req, res) => {
+app.get('/api/load/:documentId', async (req, res) => {
     try {
         const { documentId } = req.params;
-        const filePath = path.join(DATA_DIR, `${documentId}.json`);
-        if (fs.existsSync(filePath)) {
-            const data = fs.readFileSync(filePath, 'utf-8');
-            const snapshot = JSON.parse(data);
-            const metadata = loadMetadata();
+        const snapshot = await storage.loadDocument(documentId);
+        if (snapshot) {
+            const metadata = await loadMetadata();
             console.log(`[Server] Loaded document: ${documentId}`);
             res.json({ snapshot, metadata: metadata[documentId] || null });
         }
@@ -219,22 +199,18 @@ app.get('/api/load/:documentId', (req, res) => {
     }
 });
 // List documents endpoint (optionally filter by folder)
-app.get('/api/documents', (req, res) => {
+app.get('/api/documents', async (req, res) => {
     try {
         const folderId = req.query.folderId;
-        const metadata = loadMetadata();
-        const files = fs.readdirSync(DATA_DIR)
-            .filter(f => f.endsWith('.json') && !f.startsWith('_'))
-            .map(f => {
-            const filePath = path.join(DATA_DIR, f);
-            const stats = fs.statSync(filePath);
-            const docId = f.replace('.json', '');
-            const docMeta = metadata[docId] || { folderId: null };
+        const metadata = await loadMetadata();
+        const files = (await storage.listDocuments())
+            .map((item) => {
+            const docMeta = metadata[item.id] || { folderId: null };
             return {
-                id: docId,
-                name: docMeta.name || docId,
+                id: item.id,
+                name: docMeta.name || item.id,
                 folderId: docMeta.folderId,
-                modifiedAt: stats.mtime.toISOString()
+                modifiedAt: item.modifiedAt,
             };
         })
             .filter(doc => {
@@ -254,13 +230,13 @@ app.get('/api/documents', (req, res) => {
     }
 });
 // Move document to folder
-app.post('/api/documents/:documentId/move', (req, res) => {
+app.post('/api/documents/:documentId/move', async (req, res) => {
     try {
         const { documentId } = req.params;
         const { folderId } = req.body;
-        const metadata = loadMetadata();
+        const metadata = await loadMetadata();
         metadata[documentId] = { ...metadata[documentId], folderId: folderId || null };
-        saveMetadata(metadata);
+        await saveMetadata(metadata);
         console.log(`[Server] Moved document ${documentId} to folder ${folderId || 'root'}`);
         res.json({ success: true });
     }
@@ -270,16 +246,15 @@ app.post('/api/documents/:documentId/move', (req, res) => {
     }
 });
 // Delete document endpoint
-app.delete('/api/delete/:documentId', (req, res) => {
+app.delete('/api/delete/:documentId', async (req, res) => {
     try {
         const { documentId } = req.params;
-        const filePath = path.join(DATA_DIR, `${documentId}.json`);
-        if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
+        const deleted = await storage.deleteDocument(documentId);
+        if (deleted) {
             // Remove from metadata
-            const metadata = loadMetadata();
+            const metadata = await loadMetadata();
             delete metadata[documentId];
-            saveMetadata(metadata);
+            await saveMetadata(metadata);
             console.log(`[Server] Deleted document: ${documentId}`);
             res.json({ success: true });
         }
@@ -293,28 +268,26 @@ app.delete('/api/delete/:documentId', (req, res) => {
     }
 });
 // Rename document endpoint
-app.post('/api/rename/:documentId', (req, res) => {
+app.post('/api/rename/:documentId', async (req, res) => {
     try {
         const { documentId } = req.params;
         const { newName } = req.body;
         if (!newName) {
             return res.status(400).json({ error: 'New name is required' });
         }
-        const oldFilePath = path.join(DATA_DIR, `${documentId}.json`);
         const newDocumentId = newName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-');
-        const newFilePath = path.join(DATA_DIR, `${newDocumentId}.json`);
-        if (!fs.existsSync(oldFilePath)) {
+        if (!(await storage.existsDocument(documentId))) {
             return res.status(404).json({ error: 'Document not found' });
         }
-        if (oldFilePath !== newFilePath && fs.existsSync(newFilePath)) {
+        if (documentId !== newDocumentId && (await storage.existsDocument(newDocumentId))) {
             return res.status(400).json({ error: 'A document with that name already exists' });
         }
         // Rename file
-        if (oldFilePath !== newFilePath) {
-            fs.renameSync(oldFilePath, newFilePath);
+        if (documentId !== newDocumentId) {
+            await storage.renameDocument(documentId, newDocumentId);
         }
         // Update metadata
-        const metadata = loadMetadata();
+        const metadata = await loadMetadata();
         if (metadata[documentId]) {
             metadata[newDocumentId] = { ...metadata[documentId], name: newName.trim() };
             delete metadata[documentId];
@@ -322,7 +295,7 @@ app.post('/api/rename/:documentId', (req, res) => {
         else {
             metadata[newDocumentId] = { folderId: null, name: newName.trim() };
         }
-        saveMetadata(metadata);
+        await saveMetadata(metadata);
         console.log(`[Server] Renamed document: ${documentId} -> ${newDocumentId}`);
         res.json({ success: true, newDocumentId });
     }
@@ -342,7 +315,20 @@ app.get('*', (_req, res) => {
     res.sendFile(path.join(clientPath, 'index.html'));
 });
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`[Server] tldraw server running on http://localhost:${PORT}`);
-    console.log(`[Server] WebSocket server running on ws://localhost:${PORT}/ws`);
+const storageBackend = process.env.STORAGE_BACKEND?.toLowerCase() ||
+    (process.env.MINIO_ACCESS_KEY && process.env.MINIO_SECRET_KEY && (process.env.MINIO_ENDPOINT_URL || process.env.MINIO_ENDPOINT)
+        ? 'minio(auto)'
+        : 'local(auto)');
+storage
+    .init()
+    .then(() => {
+    console.log(`[Server] Storage backend: ${storageBackend}`);
+    server.listen(PORT, () => {
+        console.log(`[Server] tldraw server running on http://localhost:${PORT}`);
+        console.log(`[Server] WebSocket server running on ws://localhost:${PORT}/ws`);
+    });
+})
+    .catch((error) => {
+    console.error('[Server] Failed to initialize storage:', error);
+    process.exit(1);
 });
