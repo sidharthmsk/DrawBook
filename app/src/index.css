@@ -1016,13 +1016,6 @@ body.dashboard-mode {
   flex-shrink: 0;
 }
 
-.mindmap-node__type-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
 .mindmap-node__chevron {
   display: flex;
   align-items: center;
@@ -1131,6 +1124,33 @@ body.dashboard-mode {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+/* ─── Mind Map Drag & Drop ─── */
+.mindmap-file-node--dragging {
+  transform: scale(1.05);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  opacity: 0.9;
+  z-index: 10;
+}
+
+.mindmap-folder-node--dragging {
+  transform: scale(1.05);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  opacity: 0.9;
+  z-index: 10;
+}
+
+.mindmap-folder-node--drop-target {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px var(--accent-glow), 0 0 20px var(--accent-glow);
+  transform: scale(1.03);
+}
+
+.mindmap-folder-node--invalid-target {
+  border-color: var(--danger) !important;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.3);
+  cursor: not-allowed;
 }
 
 /* ─── View Toggle ─── */

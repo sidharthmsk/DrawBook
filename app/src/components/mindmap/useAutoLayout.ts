@@ -23,7 +23,7 @@ const NODE_DIMENSIONS = {
   root: { width: 200, height: 56 },
 };
 
-function getDescendantFolderIds(
+export function getDescendantFolderIds(
   folderId: string,
   folders: Folder[],
 ): Set<string> {
@@ -125,6 +125,7 @@ export function useAutoLayout(
           x: rootNode.x - NODE_DIMENSIONS.root.width / 2,
           y: rootNode.y - NODE_DIMENSIONS.root.height / 2,
         },
+        draggable: false,
         data: {
           folder: { id: ROOT_ID, name: "Home", parentId: null, createdAt: "" },
           isExpanded: true,
@@ -144,6 +145,7 @@ export function useAutoLayout(
           x: nodeData.x - NODE_DIMENSIONS.folder.width / 2,
           y: nodeData.y - NODE_DIMENSIONS.folder.height / 2,
         },
+        draggable: true,
         data: {
           folder: f,
           isExpanded: expandedFolders.has(f.id),
@@ -163,6 +165,7 @@ export function useAutoLayout(
           x: nodeData.x - NODE_DIMENSIONS.file.width / 2,
           y: nodeData.y - NODE_DIMENSIONS.file.height / 2,
         },
+        draggable: true,
         data: { document: doc },
       });
     }
@@ -173,7 +176,7 @@ export function useAutoLayout(
         id: `${e.v}->${e.w}`,
         source: e.v,
         target: e.w,
-        type: "smoothstep",
+        type: "default",
         style: { stroke: "var(--border-default)", strokeWidth: 1.5 },
         animated: false,
       });

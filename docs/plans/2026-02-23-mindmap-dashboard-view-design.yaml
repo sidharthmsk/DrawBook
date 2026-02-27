@@ -1,0 +1,59 @@
+title: Mind Map Dashboard View
+date: 2026-02-23
+status: approved
+
+summary: |
+  Add a mind map as an alternative Dashboard view in Drawbook. Folders render as nodes,
+  files branch off as child nodes, and users can perform full CRUD (create, rename, move,
+  delete) directly from the mind map. Built with React Flow and dagre auto-layout.
+
+architecture:
+  new_files:
+    - path: app/src/components/MindMapView.tsx
+      purpose: Main component wrapping React Flow
+    - path: app/src/components/mindmap/FileNode.tsx
+      purpose: Custom node for files (icon + name, color-coded by type)
+    - path: app/src/components/mindmap/FolderNode.tsx
+      purpose: Custom node for folders (folder icon, expandable)
+    - path: app/src/components/mindmap/MindMapContextMenu.tsx
+      purpose: Right-click context menu for CRUD
+    - path: app/src/components/mindmap/useAutoLayout.ts
+      purpose: Hook running dagre layout on changes
+
+  modified_files:
+    - path: Dashboard.tsx
+      purpose: Add view toggle (list / grid / mind map), render MindMapView when selected
+
+  dependencies:
+    - name: "@xyflow/react"
+      version: React Flow v12
+    - name: dagre
+      purpose: Auto-layout
+
+data_flow:
+  - Dashboard fetches file/folder list from existing API (no new endpoints)
+  - Transform flat list into tree structure, then into React Flow nodes + edges
+  - Dagre positions nodes in a tree layout
+  - CRUD interactions call existing API endpoints
+  - State shared with list/grid views for sync
+
+node_design:
+  file_nodes: Rounded rectangle, type-based icon, file name, color-coded border using existing theme
+  folder_nodes: Slightly larger, folder icon, collapsible children
+  edges: Subtle bezier curves from parent to child
+
+interactions:
+  open_file: Single-click file node opens it in its editor
+  create: Right-click folder -> New File / New Subfolder
+  rename: Double-click node label for inline editing
+  move: Drag node onto folder to reparent (drop-target highlight)
+  delete: Right-click -> Delete with confirmation
+  view_controls: Zoom/pan (native React Flow), Fit to view button
+  dashboard_toggle: List | Grid | Mind Map toggle group
+
+error_handling:
+  crud_errors: Toast/inline messages matching existing app patterns
+  optimistic_updates: Update UI immediately, rollback on API failure
+  empty_workspace: Centered "Create your first document" prompt
+  root_files: Children of virtual root node
+  large_workspaces: Collapsible folders, dagre handles 100+ nodes

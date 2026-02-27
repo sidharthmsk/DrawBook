@@ -11,17 +11,35 @@ interface FolderNodeData {
   isExpanded: boolean;
   isRoot: boolean;
   docCount: number;
+  isDragging?: boolean;
+  isDragTarget?: boolean;
+  isInvalidTarget?: boolean;
   [key: string]: unknown;
 }
 
 function FolderNodeComponent({ data }: NodeProps) {
-  const { folder, isExpanded, isRoot, docCount } =
-    data as unknown as FolderNodeData;
+  const {
+    folder,
+    isExpanded,
+    isRoot,
+    docCount,
+    isDragging,
+    isDragTarget,
+    isInvalidTarget,
+  } = data as unknown as FolderNodeData;
+
+  const className = [
+    "mindmap-folder-node",
+    isRoot && "mindmap-folder-node--root",
+    isDragging && "mindmap-folder-node--dragging",
+    isDragTarget && "mindmap-folder-node--drop-target",
+    isInvalidTarget && "mindmap-folder-node--invalid-target",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <div
-      className={`mindmap-folder-node ${isRoot ? "mindmap-folder-node--root" : ""}`}
-    >
+    <div className={className}>
       <Handle
         type="target"
         position={Position.Top}
