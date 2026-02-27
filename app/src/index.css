@@ -225,6 +225,7 @@ body.dashboard-mode {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
+  margin-right: 10px;
   border-radius: var(--radius-sm);
   background: var(--bg-surface-2);
 }
@@ -1241,7 +1242,7 @@ body.dashboard-mode {
   color: var(--text-secondary);
 }
 
-/* ─── Markdown Editor ─── */
+/* ─── Markdown Editor (BlockNote) ─── */
 .markdown-container {
   flex: 1;
   min-height: 0;
@@ -1249,91 +1250,25 @@ body.dashboard-mode {
   padding: 0;
 }
 
-.markdown-textarea {
-  width: 100%;
+.markdown-container .bn-container {
   height: 100%;
-  border: none;
-  background: var(--bg-base);
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 14px;
-  line-height: 1.7;
-  padding: 32px 48px;
-  resize: none;
-  outline: none;
 }
 
-.markdown-textarea::placeholder {
-  color: var(--text-tertiary);
-}
-
-.markdown-preview {
-  padding: 32px 48px;
-  color: var(--text-primary);
-  font-family: var(--font-body);
-  font-size: 15px;
-  line-height: 1.8;
+.markdown-container .bn-editor {
   max-width: 780px;
   margin: 0 auto;
+  padding: 32px 48px;
 }
 
-.markdown-preview h1 {
-  font-family: var(--font-display);
-  font-size: 32px;
-  font-weight: 700;
-  margin: 0 0 16px;
-  letter-spacing: -0.5px;
-  color: var(--text-primary);
-}
-
-.markdown-preview h2 {
-  font-family: var(--font-display);
-  font-size: 24px;
-  font-weight: 600;
-  margin: 32px 0 12px;
-  letter-spacing: -0.3px;
-  color: var(--text-primary);
-}
-
-.markdown-preview h3 {
-  font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 600;
-  margin: 24px 0 8px;
-  color: var(--text-primary);
-}
-
-.markdown-preview p {
-  margin: 0 0 16px;
-  color: var(--text-secondary);
-}
-
-.markdown-preview strong {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.markdown-preview em {
-  font-style: italic;
-}
-
-.markdown-preview code {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  background: var(--bg-surface-2);
-  padding: 2px 6px;
-  border-radius: 4px;
-  color: var(--accent);
-}
-
-.markdown-preview ul {
-  padding-left: 24px;
-  margin: 0 0 16px;
-}
-
-.markdown-preview li {
-  margin-bottom: 4px;
-  color: var(--text-secondary);
+.markdown-container .bn-container[data-color-scheme="dark"] {
+  --bn-colors-editor-background: var(--bg-base);
+  --bn-colors-menu-background: var(--bg-elevated);
+  --bn-colors-menu-text: var(--text-primary);
+  --bn-colors-hovered-background: var(--bg-surface-2);
+  --bn-colors-border: var(--border-default);
+  --bn-colors-shadow: rgba(0, 0, 0, 0.4);
+  --bn-colors-side-menu: var(--text-tertiary);
+  --bn-font-family: var(--font-body);
 }
 
 /* ─── PDF Viewer ─── */
