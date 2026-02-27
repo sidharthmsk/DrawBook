@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { EditableTitle } from "./EditableTitle";
 
 interface DrawioEditorProps {
   documentId: string;
@@ -106,7 +107,7 @@ export function DrawioEditor({ documentId }: DrawioEditorProps) {
           </svg>
           Back
         </button>
-        <span className="editor-topbar__title">{documentId}</span>
+        <EditableTitle documentId={documentId} />
         <div className="editor-topbar__status">
           <span
             className={`editor-status-dot editor-status-dot--${saveStatus === "error" ? "error" : saveStatus === "saved" ? "saved" : "saving"}`}

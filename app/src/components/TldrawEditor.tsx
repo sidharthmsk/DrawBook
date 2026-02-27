@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
+import { EditableTitle } from "./EditableTitle";
 import {
   Tldraw,
   Editor,
@@ -109,7 +110,8 @@ export function TldrawEditor({
     if (!editor) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws?doc=${documentId}`;
+    const token = localStorage.getItem("drawbook_token") || "";
+    const wsUrl = `${protocol}//${window.location.host}/ws?doc=${documentId}${token ? `&token=${token}` : ""}`;
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -288,16 +290,36 @@ export function TldrawEditor({
         : "saving";
 
   return (
-    <div style={{ width: "100%", height: "100%", position: "relative" }}>
-      <Tldraw store={store} onMount={handleMount} autoFocus />
-
-      <div className="editor-status-bar">
-        <span
-          className={`editor-status-bar__dot editor-status-bar__dot--${dotClass}`}
-        />
-        <span className="editor-status-bar__text">{statusLabel}</span>
-        <span className="editor-status-bar__separator">·</span>
-        <span className="editor-status-bar__docid">{documentId}</span>
+    <div className="editor-wrapper">
+      <div className="editor-topbar">
+        <button
+          className="editor-back-btn"
+          onClick={() => (window.location.href = "/")}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M10 12L6 8l4-4" />
+          </svg>
+          Back
+        </button>
+        <EditableTitle documentId={documentId} />
+        <div className="editor-topbar__status">
+          <span
+            className={`editor-status-dot editor-status-dot--${dotClass}`}
+          />
+          <span>{statusLabel}</span>
+        </div>
+      </div>
+      <div className="editor-canvas">
+        <Tldraw store={store} onMount={handleMount} autoFocus />
       </div>
     </div>
   );

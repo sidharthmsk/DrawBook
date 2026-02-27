@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import crypto from "crypto";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import path from "path";
@@ -22,6 +23,22 @@ if (!process.env.MINIO_ENDPOINT_URL && !process.env.MINIO_ENDPOINT) {
   dotenv.config({ path: path.resolve(process.cwd(), "../.env") });
 }
 
+const APP_PASSWORD = process.env.APP_PASSWORD || "";
+const AUTH_TOKEN = APP_PASSWORD
+  ? crypto.createHash("sha256").update(APP_PASSWORD).digest("hex")
+  : "";
+
+function requireAuth(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) {
+  if (!AUTH_TOKEN) return next();
+  const header = req.headers.authorization;
+  if (header === `Bearer ${AUTH_TOKEN}`) return next();
+  res.status(401).json({ error: "Unauthorized" });
+}
+
 const app = express();
 const server = createServer(app);
 
@@ -34,6 +51,14 @@ const rooms = new Map<string, Set<WebSocket>>();
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url || "", `http://${req.headers.host}`);
   const documentId = url.searchParams.get("doc");
+
+  if (AUTH_TOKEN) {
+    const token = url.searchParams.get("token");
+    if (token !== AUTH_TOKEN) {
+      ws.close(1008, "Unauthorized");
+      return;
+    }
+  }
 
   if (!documentId) {
     ws.close(1008, "Document ID required");
@@ -83,6 +108,31 @@ wss.on("connection", (ws, req) => {
 // CORS - open for internal network use
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
+
+// ============ AUTH ENDPOINTS (public) ============
+
+app.post("/api/auth/login", (req, res) => {
+  if (!AUTH_TOKEN) {
+    return res.json({ success: true, token: "" });
+  }
+  const { password } = req.body;
+  if (!password || password !== APP_PASSWORD) {
+    return res.status(401).json({ error: "Invalid password" });
+  }
+  res.json({ success: true, token: AUTH_TOKEN });
+});
+
+app.get("/api/auth/check", (req, res) => {
+  if (!AUTH_TOKEN) {
+    return res.json({ authenticated: true, required: false });
+  }
+  const header = req.headers.authorization;
+  const valid = header === `Bearer ${AUTH_TOKEN}`;
+  res.json({ authenticated: valid, required: true });
+});
+
+// Protect all other /api routes
+app.use("/api", requireAuth);
 
 const storage = createStorageAdapter();
 const upload = multer({
@@ -385,6 +435,56 @@ app.post("/api/rename/:documentId", async (req, res) => {
   } catch (error) {
     console.error("[Server] Rename error:", error);
     res.status(500).json({ error: "Failed to rename document" });
+  }
+});
+
+// ============ BULK ENDPOINTS ============
+
+app.post("/api/bulk/move", async (req, res) => {
+  try {
+    const { documentIds, folderId } = req.body;
+    if (!Array.isArray(documentIds)) {
+      return res.status(400).json({ error: "documentIds array is required" });
+    }
+    const metadata = await loadMetadata();
+    for (const docId of documentIds) {
+      if (metadata[docId]) {
+        metadata[docId].folderId = folderId || null;
+      }
+    }
+    await saveMetadata(metadata);
+    console.log(
+      `[Server] Bulk moved ${documentIds.length} docs to ${folderId || "root"}`,
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[Server] Bulk move error:", error);
+    res.status(500).json({ error: "Failed to bulk move" });
+  }
+});
+
+app.post("/api/bulk/delete", async (req, res) => {
+  try {
+    const { documentIds } = req.body;
+    if (!Array.isArray(documentIds)) {
+      return res.status(400).json({ error: "documentIds array is required" });
+    }
+    const metadata = await loadMetadata();
+    for (const docId of documentIds) {
+      const docMeta = metadata[docId];
+      if (docMeta?.type === "pdf") {
+        await storage.deleteFile(docId, "pdf");
+      } else {
+        await storage.deleteDocument(docId);
+      }
+      delete metadata[docId];
+    }
+    await saveMetadata(metadata);
+    console.log(`[Server] Bulk deleted ${documentIds.length} docs`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[Server] Bulk delete error:", error);
+    res.status(500).json({ error: "Failed to bulk delete" });
   }
 });
 
