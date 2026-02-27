@@ -7,10 +7,12 @@ import { PdfViewer } from "./components/PdfViewer";
 import { SpreadsheetEditor } from "./components/SpreadsheetEditor";
 import { KanbanEditor } from "./components/KanbanEditor";
 import { CodeEditor } from "./components/CodeEditor";
+import { GridEditor } from "./components/GridEditor";
 import { Dashboard } from "./components/Dashboard";
 import { LoginPage } from "./components/LoginPage";
 import { ConfirmProvider } from "./components/ConfirmDialog";
 import { QuickSwitcher } from "./components/QuickSwitcher";
+import { setLinkingEnabled } from "./components/DocumentLink";
 
 type DocumentType =
   | "tldraw"
@@ -20,7 +22,8 @@ type DocumentType =
   | "pdf"
   | "spreadsheet"
   | "kanban"
-  | "code";
+  | "code"
+  | "grid";
 
 function typeFromId(id: string): DocumentType {
   if (id.startsWith("excalidraw-")) return "excalidraw";
@@ -30,6 +33,7 @@ function typeFromId(id: string): DocumentType {
   if (id.startsWith("spreadsheet-")) return "spreadsheet";
   if (id.startsWith("kanban-")) return "kanban";
   if (id.startsWith("code-")) return "code";
+  if (id.startsWith("grid-")) return "grid";
   return "tldraw";
 }
 
@@ -64,9 +68,17 @@ export function getAuthToken(): string {
 
 export interface AppConfig {
   enableTldraw: boolean;
+  enableLinking: boolean;
+  storageBackend: string;
+  isElectron: boolean;
 }
 
-const DEFAULT_CONFIG: AppConfig = { enableTldraw: false };
+const DEFAULT_CONFIG: AppConfig = {
+  enableTldraw: false,
+  enableLinking: false,
+  storageBackend: "local",
+  isElectron: false,
+};
 
 function App() {
   const [authState, setAuthState] = useState<
@@ -88,6 +100,7 @@ function App() {
     Promise.all([authCheck, configCheck])
       .then(([authData, configData]) => {
         setConfig(configData);
+        setLinkingEnabled(!!configData.enableLinking);
         if (!authData.required || authData.authenticated) {
           if (token) injectAuthFetch(token);
           setAuthState("authenticated");
@@ -189,6 +202,8 @@ function AppRouter({ config }: { config: AppConfig }) {
         return <KanbanEditor documentId={documentId} />;
       case "code":
         return <CodeEditor documentId={documentId} />;
+      case "grid":
+        return <GridEditor documentId={documentId} />;
       default:
         if (!config.enableTldraw) {
           return (

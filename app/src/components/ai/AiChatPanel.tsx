@@ -2,6 +2,10 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import type { EditorAdapter } from "./EditorAdapter";
 import { renderWithLinks } from "../DocumentLink";
+import {
+  DocumentContextPicker,
+  type AttachedContext,
+} from "./DocumentContextPicker";
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -113,6 +117,7 @@ export function AiChatPanel({
   const [error, setError] = useState<string | null>(null);
   const [contextPreview, setContextPreview] = useState("");
   const [contextExpanded, setContextExpanded] = useState(false);
+  const [attachedDocs, setAttachedDocs] = useState<AttachedContext[]>([]);
   const lastFailedMessages = useRef<ChatMessage[] | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -186,6 +191,10 @@ export function AiChatPanel({
 
       try {
         const canvasContext = adapter.getContext();
+        const extraContext =
+          attachedDocs.length > 0
+            ? attachedDocs.map((d) => d.context).join("\n\n---\n\n")
+            : undefined;
 
         const response = await fetch("/api/ai/chat", {
           method: "POST",
@@ -200,6 +209,7 @@ export function AiChatPanel({
             })),
             canvasContext,
             editorType: adapter.type,
+            extraContext,
           }),
         });
 
@@ -279,7 +289,7 @@ export function AiChatPanel({
         setLoading(false);
       }
     },
-    [input, messages, loading, adapter],
+    [input, messages, loading, adapter, attachedDocs],
   );
 
   const retryLastMessage = useCallback(async () => {
@@ -291,6 +301,10 @@ export function AiChatPanel({
 
     try {
       const canvasContext = adapter.getContext();
+      const extraContext =
+        attachedDocs.length > 0
+          ? attachedDocs.map((d) => d.context).join("\n\n---\n\n")
+          : undefined;
       const response = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -301,6 +315,7 @@ export function AiChatPanel({
           })),
           canvasContext,
           editorType: adapter.type,
+          extraContext,
         }),
       });
 
@@ -332,7 +347,7 @@ export function AiChatPanel({
     } finally {
       setLoading(false);
     }
-  }, [loading, adapter]);
+  }, [loading, adapter, attachedDocs]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -352,11 +367,11 @@ export function AiChatPanel({
   );
 
   const handleApply = useCallback(
-    (index: number) => {
+    async (index: number) => {
       const msg = messages[index];
       if (!msg?.aiContent) return;
 
-      adapter.applyContent(msg.aiContent);
+      await adapter.applyContent(msg.aiContent);
       setMessages((prev) =>
         prev.map((m, i) => (i === index ? { ...m, applied: true } : m)),
       );
@@ -708,6 +723,15 @@ export function AiChatPanel({
           </div>
         )}
       </div>
+
+      <DocumentContextPicker
+        currentDocumentId={documentId}
+        attachedDocs={attachedDocs}
+        onAttach={(doc) => setAttachedDocs((prev) => [...prev, doc])}
+        onDetach={(id) =>
+          setAttachedDocs((prev) => prev.filter((d) => d.id !== id))
+        }
+      />
 
       <div className="ai-chat-panel__input-area">
         <textarea

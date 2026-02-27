@@ -8,14 +8,6 @@ import { BlockNoteView } from "@blocknote/mantine";
 import { useCreateBlockNote } from "@blocknote/react";
 import { createMarkdownAdapter } from "./ai/EditorAdapter";
 import type { EditorAdapter } from "./ai/EditorAdapter";
-import { DocumentPicker, InlineSuggestDropdown } from "./DocumentLink";
-
-interface DocOption {
-  id: string;
-  name: string;
-  type: string;
-}
-
 interface MarkdownEditorProps {
   documentId: string;
 }
@@ -154,10 +146,6 @@ export function MarkdownEditor({ documentId }: MarkdownEditorProps) {
   }, [docName]);
 
   const [tocOpen, setTocOpen] = useState(false);
-  const [docPickerOpen, setDocPickerOpen] = useState(false);
-  const [inlineSuggestOpen, setInlineSuggestOpen] = useState(false);
-  const [inlineSuggestQuery, setInlineSuggestQuery] = useState("");
-  const [inlineSuggestPos, setInlineSuggestPos] = useState({ top: 0, left: 0 });
   const [headings, setHeadings] = useState<
     Array<{ id: string; text: string; level: number }>
   >([]);
@@ -193,76 +181,7 @@ export function MarkdownEditor({ documentId }: MarkdownEditorProps) {
   const handleChangeWithToc = useCallback(() => {
     originalHandleChange();
     setTimeout(refreshHeadings, 600);
-
-    // Detect [[ for inline suggest
-    const sel = window.getSelection();
-    if (!sel || !sel.rangeCount) return;
-    const range = sel.getRangeAt(0);
-    const textNode = range.startContainer;
-    if (textNode.nodeType !== Node.TEXT_NODE) return;
-    const text = textNode.textContent || "";
-    const cursorOffset = range.startOffset;
-    const before = text.slice(0, cursorOffset);
-    const triggerIdx = before.lastIndexOf("[[");
-    if (triggerIdx === -1 || before.indexOf("]]", triggerIdx) !== -1) {
-      if (inlineSuggestOpen) setInlineSuggestOpen(false);
-      return;
-    }
-    const partial = before.slice(triggerIdx + 2);
-    if (partial.includes("\n")) {
-      if (inlineSuggestOpen) setInlineSuggestOpen(false);
-      return;
-    }
-    setInlineSuggestQuery(partial);
-    setInlineSuggestOpen(true);
-
-    const rect = range.getBoundingClientRect();
-    setInlineSuggestPos({ top: rect.bottom + 4, left: rect.left });
-  }, [originalHandleChange, refreshHeadings, inlineSuggestOpen]);
-
-  const handleInlineSuggestSelect = useCallback(
-    (doc: DocOption) => {
-      setInlineSuggestOpen(false);
-      const ed = editorRef.current;
-      if (!ed) return;
-
-      // We need to remove the "[[partial" text and replace with [[DocName]]
-      const sel = window.getSelection();
-      if (!sel || !sel.rangeCount) return;
-      const range = sel.getRangeAt(0);
-      const textNode = range.startContainer;
-      if (textNode.nodeType !== Node.TEXT_NODE) return;
-      const text = textNode.textContent || "";
-      const cursorOffset = range.startOffset;
-      const before = text.slice(0, cursorOffset);
-      const triggerIdx = before.lastIndexOf("[[");
-      if (triggerIdx === -1) return;
-
-      // Delete from [[ to cursor, then insert the full link
-      const deleteRange = document.createRange();
-      deleteRange.setStart(textNode, triggerIdx);
-      deleteRange.setEnd(textNode, cursorOffset);
-      deleteRange.deleteContents();
-
-      // Insert the link text via DOM (BlockNote will pick up the change)
-      const linkText = document.createTextNode(`[[${doc.name}]]`);
-      deleteRange.insertNode(linkText);
-
-      // Move cursor after the inserted text
-      const newRange = document.createRange();
-      newRange.setStartAfter(linkText);
-      newRange.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(newRange);
-
-      // Trigger a save
-      if (saveTimeout.current) clearTimeout(saveTimeout.current);
-      saveTimeout.current = setTimeout(() => {
-        if (editorRef.current) saveToServer(editorRef.current);
-      }, 1500);
-    },
-    [saveToServer],
-  );
+  }, [originalHandleChange, refreshHeadings]);
 
   if (initialBlocks === undefined) {
     return (
@@ -298,24 +217,6 @@ export function MarkdownEditor({ documentId }: MarkdownEditorProps) {
               strokeLinecap="round"
             >
               <path d="M2 3h12M2 7h8M2 11h10M2 15h6" />
-            </svg>
-          </button>
-          <button
-            className="md-toc-toggle"
-            onClick={() => setDocPickerOpen(true)}
-            title="Insert document link [[...]]"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M7 4H5a3 3 0 000 6h2M9 4h2a3 3 0 010 6H9M5.5 7h5" />
             </svg>
           </button>
         </>
@@ -361,37 +262,6 @@ export function MarkdownEditor({ documentId }: MarkdownEditorProps) {
         {wordCount} {wordCount === 1 ? "word" : "words"} &middot;{" "}
         {Math.max(1, Math.ceil(wordCount / 200))} min read
       </div>
-      {docPickerOpen && (
-        <div
-          className="doc-picker-overlay"
-          onClick={() => setDocPickerOpen(false)}
-        >
-          <div onClick={(e) => e.stopPropagation()}>
-            <DocumentPicker
-              onSelect={(doc) => {
-                setDocPickerOpen(false);
-                if (!editorRef.current) return;
-                const ed = editorRef.current;
-                const cursor = ed.getTextCursorPosition();
-                if (cursor) {
-                  ed.insertInlineContent([
-                    { type: "text", text: `[[${doc.name}]]`, styles: {} },
-                  ]);
-                }
-              }}
-              onClose={() => setDocPickerOpen(false)}
-            />
-          </div>
-        </div>
-      )}
-      {inlineSuggestOpen && (
-        <InlineSuggestDropdown
-          query={inlineSuggestQuery}
-          position={inlineSuggestPos}
-          onSelect={handleInlineSuggestSelect}
-          onClose={() => setInlineSuggestOpen(false)}
-        />
-      )}
     </EditorShell>
   );
 }

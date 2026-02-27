@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useIsMobile } from "../hooks/useIsMobile";
 
 type DocumentType =
   | "tldraw"
@@ -8,7 +9,8 @@ type DocumentType =
   | "pdf"
   | "spreadsheet"
   | "kanban"
-  | "code";
+  | "code"
+  | "grid";
 
 interface DocumentItem {
   id: string;
@@ -72,10 +74,16 @@ export function CalendarView({
   docs: DocumentItem[];
   onOpenDocument: (doc: DocumentItem) => void;
 }) {
+  const isMobile = useIsMobile();
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [dailyNotes, setDailyNotes] = useState<DailyNote[]>([]);
+  const [mobileStart, setMobileStart] = useState(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  });
 
   useEffect(() => {
     fetch("/api/daily-notes")
@@ -152,6 +160,35 @@ export function CalendarView({
   const goToday = () => {
     setYear(today.getFullYear());
     setMonth(today.getMonth());
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    setMobileStart(d);
+  };
+
+  const mobileDays = useMemo(() => {
+    const days: Date[] = [];
+    for (let i = 0; i < 3; i++) {
+      const d = new Date(mobileStart);
+      d.setDate(d.getDate() + i);
+      days.push(d);
+    }
+    return days;
+  }, [mobileStart]);
+
+  const prevMobileDays = () => {
+    setMobileStart((prev) => {
+      const d = new Date(prev);
+      d.setDate(d.getDate() - 3);
+      return d;
+    });
+  };
+
+  const nextMobileDays = () => {
+    setMobileStart((prev) => {
+      const d = new Date(prev);
+      d.setDate(d.getDate() + 3);
+      return d;
+    });
   };
 
   const openDailyNote = useCallback(async (date: string) => {
@@ -190,6 +227,147 @@ export function CalendarView({
   }, []);
 
   const todayKey = dateKey(today);
+
+  const renderDayCell = (date: Date, inMonth = true) => {
+    const key = dateKey(date);
+    const isToday = key === todayKey;
+    const cellDocs = docsByDate.get(key) || [];
+    const dailyNote = dailyNotesByDate.get(key);
+    const totalItems = (dailyNote ? 1 : 0) + cellDocs.length;
+    const maxShow = isMobile ? 6 : 3;
+    const docsToShow = dailyNote
+      ? cellDocs.slice(0, maxShow - 1)
+      : cellDocs.slice(0, maxShow);
+    const overflow = totalItems - maxShow;
+
+    return (
+      <div
+        className={`calendar-view__cell${!inMonth ? " calendar-view__cell--outside" : ""}${isToday ? " calendar-view__cell--today" : ""}`}
+      >
+        <span
+          className={`calendar-view__date-num${isToday ? " calendar-view__date-num--today" : ""}`}
+        >
+          {date.getDate()}
+        </span>
+        <div className="calendar-view__docs">
+          {dailyNote && (
+            <button
+              className="calendar-view__doc calendar-view__doc--daily"
+              style={{ borderLeftColor: DAILY_NOTE_COLOR }}
+              onClick={() => openDailyNote(dailyNote.date)}
+              title={`Daily Note — ${dailyNote.date}`}
+            >
+              <svg
+                className="calendar-view__daily-icon"
+                width="10"
+                height="10"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="2" y="3" width="12" height="11" rx="1" />
+                <path d="M2 6.5h12" />
+              </svg>
+              <span className="calendar-view__doc-name">Daily Note</span>
+            </button>
+          )}
+          {docsToShow.map((doc) => (
+            <button
+              key={doc.id}
+              className="calendar-view__doc"
+              style={{
+                borderLeftColor: TYPE_COLORS[doc.type] || "var(--accent)",
+              }}
+              onClick={() => onOpenDocument(doc)}
+              title={`${doc.name} (${doc.type})`}
+            >
+              <span className="calendar-view__doc-name">{doc.name}</span>
+            </button>
+          ))}
+          {overflow > 0 && (
+            <span className="calendar-view__more">+{overflow} more</span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  if (isMobile) {
+    const mobileTitle = mobileDays
+      .map((d) => `${DAY_LABELS[d.getDay()]} ${d.getDate()}`)
+      .join(" – ");
+
+    return (
+      <div className="calendar-view calendar-view--mobile">
+        <div className="calendar-view__header">
+          <button className="calendar-view__nav" onClick={prevMobileDays}>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M10 4l-4 4 4 4" />
+            </svg>
+          </button>
+          <h3 className="calendar-view__title">{mobileTitle}</h3>
+          <button className="calendar-view__nav" onClick={nextMobileDays}>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M6 4l4 4-4 4" />
+            </svg>
+          </button>
+          <button className="calendar-view__today" onClick={goToday}>
+            Today
+          </button>
+          <button
+            className="calendar-view__daily-btn"
+            onClick={createTodayNote}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M8 3v10M3 8h10" />
+            </svg>
+            Today's Note
+          </button>
+        </div>
+
+        <div className="calendar-view__grid calendar-view__grid--3day">
+          {mobileDays.map((d) => (
+            <div key={dateKey(d)} className="calendar-view__day-label">
+              {DAY_LABELS[d.getDay()]}
+            </div>
+          ))}
+          {mobileDays.map((d) => (
+            <div key={`cell-${dateKey(d)}`}>{renderDayCell(d)}</div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="calendar-view">
@@ -252,74 +430,9 @@ export function CalendarView({
           </div>
         ))}
 
-        {calendarDays.map((cell, i) => {
-          const key = dateKey(cell.date);
-          const isToday = key === todayKey;
-          const cellDocs = docsByDate.get(key) || [];
-          const dailyNote = dailyNotesByDate.get(key);
-
-          const totalItems = (dailyNote ? 1 : 0) + cellDocs.length;
-          const maxShow = 3;
-          const docsToShow = dailyNote
-            ? cellDocs.slice(0, maxShow - 1)
-            : cellDocs.slice(0, maxShow);
-          const overflow = totalItems - maxShow;
-
-          return (
-            <div
-              key={i}
-              className={`calendar-view__cell${!cell.inMonth ? " calendar-view__cell--outside" : ""}${isToday ? " calendar-view__cell--today" : ""}`}
-            >
-              <span
-                className={`calendar-view__date-num${isToday ? " calendar-view__date-num--today" : ""}`}
-              >
-                {cell.date.getDate()}
-              </span>
-              <div className="calendar-view__docs">
-                {dailyNote && (
-                  <button
-                    className="calendar-view__doc calendar-view__doc--daily"
-                    style={{ borderLeftColor: DAILY_NOTE_COLOR }}
-                    onClick={() => openDailyNote(dailyNote.date)}
-                    title={`Daily Note — ${dailyNote.date}`}
-                  >
-                    <svg
-                      className="calendar-view__daily-icon"
-                      width="10"
-                      height="10"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <rect x="2" y="3" width="12" height="11" rx="1" />
-                      <path d="M2 6.5h12" />
-                    </svg>
-                    <span className="calendar-view__doc-name">Daily Note</span>
-                  </button>
-                )}
-                {docsToShow.map((doc) => (
-                  <button
-                    key={doc.id}
-                    className="calendar-view__doc"
-                    style={{
-                      borderLeftColor: TYPE_COLORS[doc.type] || "var(--accent)",
-                    }}
-                    onClick={() => onOpenDocument(doc)}
-                    title={`${doc.name} (${doc.type})`}
-                  >
-                    <span className="calendar-view__doc-name">{doc.name}</span>
-                  </button>
-                ))}
-                {overflow > 0 && (
-                  <span className="calendar-view__more">+{overflow} more</span>
-                )}
-              </div>
-            </div>
-          );
-        })}
+        {calendarDays.map((cell, i) => (
+          <div key={i}>{renderDayCell(cell.date, cell.inMonth)}</div>
+        ))}
       </div>
     </div>
   );

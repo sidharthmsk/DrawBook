@@ -10,6 +10,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { MindMapView } from "./MindMapView";
 import { LinkGraph } from "./LinkGraph";
 import { CalendarView } from "./CalendarView";
+import { SettingsPage } from "./SettingsPage";
 
 type DocumentType =
   | "tldraw"
@@ -19,7 +20,8 @@ type DocumentType =
   | "pdf"
   | "spreadsheet"
   | "kanban"
-  | "code";
+  | "code"
+  | "grid";
 
 function typeFromId(id: string): DocumentType {
   if (id.startsWith("excalidraw-")) return "excalidraw";
@@ -29,6 +31,7 @@ function typeFromId(id: string): DocumentType {
   if (id.startsWith("spreadsheet-")) return "spreadsheet";
   if (id.startsWith("kanban-")) return "kanban";
   if (id.startsWith("code-")) return "code";
+  if (id.startsWith("grid-")) return "grid";
   return "tldraw";
 }
 
@@ -110,6 +113,7 @@ const TYPE_CONFIG: Record<DocumentType, { label: string; color: string }> = {
   spreadsheet: { label: "Spreadsheet", color: "var(--type-spreadsheet)" },
   kanban: { label: "Kanban", color: "var(--type-kanban)" },
   code: { label: "Code", color: "var(--type-code)" },
+  grid: { label: "Table", color: "var(--type-grid)" },
 };
 
 /* ─── Inline SVG Icons ─── */
@@ -174,6 +178,22 @@ const IconPlus = () => (
     strokeLinecap="round"
   >
     <path d="M8 3v10M3 8h10" />
+  </svg>
+);
+
+const IconTemplate = () => (
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <rect x="2" y="2" width="12" height="12" rx="1" />
+    <path d="M5 2v5l2.5-1.5L10 7V2" />
   </svg>
 );
 
@@ -370,6 +390,22 @@ const IconCode = () => (
   </svg>
 );
 
+const IconGrid = () => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
+  </svg>
+);
+
 const TYPE_ICONS: Record<DocumentType, () => JSX.Element> = {
   tldraw: IconTldraw,
   excalidraw: IconExcalidraw,
@@ -379,6 +415,7 @@ const TYPE_ICONS: Record<DocumentType, () => JSX.Element> = {
   spreadsheet: IconSpreadsheet,
   kanban: IconKanban,
   code: IconCode,
+  grid: IconGrid,
 };
 
 function ClickOrDouble({
@@ -406,7 +443,7 @@ function ClickOrDouble({
           clickTimer.current = setTimeout(() => {
             clickTimer.current = null;
             onSingleClick();
-          }, 250);
+          }, 400);
         }
       }}
     >
@@ -504,14 +541,18 @@ function DocContextMenu({
       </button>
       <div
         className="dropdown-menu__hover-parent"
-        onMouseLeave={() => setMoveMenuDocId(() => null)}
+        onMouseLeave={() => {
+          if (!("ontouchstart" in window)) setMoveMenuDocId(() => null);
+        }}
       >
         <button
           className="dropdown-menu__has-sub"
           onClick={() =>
             setMoveMenuDocId((current) => (current === doc.id ? null : doc.id))
           }
-          onMouseEnter={() => setMoveMenuDocId(() => doc.id)}
+          onMouseEnter={() => {
+            if (!("ontouchstart" in window)) setMoveMenuDocId(() => doc.id);
+          }}
         >
           Move to...
           <svg
@@ -567,6 +608,7 @@ function DocContextMenu({
 
 interface AppConfig {
   enableTldraw: boolean;
+  enableLinking: boolean;
 }
 
 export function Dashboard({ config }: { config: AppConfig }) {
@@ -605,6 +647,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
   const [showTrash, setShowTrash] = useState(false);
   const [showLinkGraph, setShowLinkGraph] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [obsidianImportOpen, setObsidianImportOpen] = useState(false);
   const [fleetingOpen, setFleetingOpen] = useState(false);
   const [fleetingNotes, setFleetingNotes] = useState<
@@ -654,6 +697,21 @@ export function Dashboard({ config }: { config: AppConfig }) {
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
   const lastSelectedIndex = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const touchStartX = useRef<number | null>(null);
+
+  const handleSidebarTouchStart = useCallback((e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+  }, []);
+
+  const handleSidebarTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (touchStartX.current === null) return;
+    const deltaX = e.changedTouches[0].clientX - touchStartX.current;
+    if (deltaX < -50) {
+      setSidebarOpen(false);
+    }
+    touchStartX.current = null;
+  }, []);
 
   const [viewMode, setViewMode] = useState<
     "list" | "grid" | "mindmap" | "calendar"
@@ -786,6 +844,24 @@ export function Dashboard({ config }: { config: AppConfig }) {
 
   useEffect(() => {
     loadData();
+
+    let lastRefresh = Date.now();
+    const refreshIfStale = () => {
+      if (Date.now() - lastRefresh > 2000) {
+        lastRefresh = Date.now();
+        loadData();
+      }
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refreshIfStale();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", refreshIfStale);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", refreshIfStale);
+    };
   }, []);
 
   useEffect(() => {
@@ -808,6 +884,10 @@ export function Dashboard({ config }: { config: AppConfig }) {
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, []);
+
+  useEffect(() => {
+    if (newDropdownOpen) loadTemplates();
+  }, [newDropdownOpen]);
 
   useEffect(() => {
     if (!openMenuId && !newDropdownOpen && !bulkMoveOpen) return;
@@ -1603,8 +1683,11 @@ export function Dashboard({ config }: { config: AppConfig }) {
       )}
 
       <aside
+        ref={sidebarRef}
         className={`dashboard-sidebar ${sidebarOpen ? "open" : ""}`}
         style={{ width: sidebarWidth, minWidth: sidebarWidth }}
+        onTouchStart={handleSidebarTouchStart}
+        onTouchEnd={handleSidebarTouchEnd}
       >
         <div className="dashboard-sidebar__top">
           <div className="dashboard-brand">
@@ -1629,7 +1712,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
             setShowTrash(false);
             setShowLinkGraph(false);
             setShowTemplates(false);
-
+            setShowSettings(false);
             setSidebarOpen(false);
           }}
           onDragOver={(e) => e.preventDefault()}
@@ -1770,6 +1853,10 @@ export function Dashboard({ config }: { config: AppConfig }) {
                         className="folder-link"
                         onClick={() => {
                           setCurrentFolder(folder.id);
+                          setShowTrash(false);
+                          setShowLinkGraph(false);
+                          setShowTemplates(false);
+                          setShowSettings(false);
                           setSidebarOpen(false);
                         }}
                       >
@@ -1864,7 +1951,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
             setShowTrash(true);
             setShowTemplates(false);
             setShowLinkGraph(false);
-
+            setShowSettings(false);
             setCurrentFolder(null);
             loadTrash();
           }}
@@ -1883,38 +1970,41 @@ export function Dashboard({ config }: { config: AppConfig }) {
           </svg>
           <span>Trash</span>
         </button>
-        <button
-          className={`folder-link trash-link${showLinkGraph ? " active" : ""}`}
-          onClick={() => {
-            setShowLinkGraph(true);
-            setShowTrash(false);
-            setShowTemplates(false);
-          }}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+        {config.enableLinking && (
+          <button
+            className={`folder-link trash-link${showLinkGraph ? " active" : ""}`}
+            onClick={() => {
+              setShowLinkGraph(true);
+              setShowTrash(false);
+              setShowTemplates(false);
+              setShowSettings(false);
+            }}
           >
-            <circle cx="4" cy="4" r="2" />
-            <circle cx="12" cy="4" r="2" />
-            <circle cx="8" cy="12" r="2" />
-            <path d="M6 4h4M5.5 5.5L7 10.5M10.5 5.5L9 10.5" />
-          </svg>
-          <span>Link Graph</span>
-        </button>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="4" cy="4" r="2" />
+              <circle cx="12" cy="4" r="2" />
+              <circle cx="8" cy="12" r="2" />
+              <path d="M6 4h4M5.5 5.5L7 10.5M10.5 5.5L9 10.5" />
+            </svg>
+            <span>Link Graph</span>
+          </button>
+        )}
         <button
           className={`folder-link trash-link${showTemplates ? " active" : ""}`}
           onClick={() => {
             setShowTemplates(true);
             setShowTrash(false);
             setShowLinkGraph(false);
-
+            setShowSettings(false);
             loadTemplates();
           }}
         >
@@ -1932,6 +2022,30 @@ export function Dashboard({ config }: { config: AppConfig }) {
             <path d="M5 2v5l2.5-1.5L10 7V2" />
           </svg>
           <span>Templates</span>
+        </button>
+        <button
+          className={`folder-link trash-link${showSettings ? " active" : ""}`}
+          onClick={() => {
+            setShowSettings(true);
+            setShowTrash(false);
+            setShowLinkGraph(false);
+            setShowTemplates(false);
+          }}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="8" cy="8" r="2.5" />
+            <path d="M13.3 10a1.1 1.1 0 00.22 1.21l.04.04a1.33 1.33 0 11-1.89 1.89l-.04-.04A1.1 1.1 0 0010 13.3v.04A1.33 1.33 0 017.33 14v-.07a1.1 1.1 0 00-.72-1.01 1.1 1.1 0 00-1.21.22l-.04.04a1.33 1.33 0 11-1.89-1.89l.04-.04A1.1 1.1 0 003.73 10a1.1 1.1 0 00-1.01-.72H2.67a1.33 1.33 0 010-2.67h.07a1.1 1.1 0 001.01-.72 1.1 1.1 0 00-.22-1.21l-.04-.04a1.33 1.33 0 111.89-1.89l.04.04A1.1 1.1 0 006.63 3v-.04a1.33 1.33 0 012.67 0v.07a1.1 1.1 0 00.72 1.01 1.1 1.1 0 001.21-.22l.04-.04a1.33 1.33 0 111.89 1.89l-.04.04A1.1 1.1 0 0012.9 6.93a1.1 1.1 0 001.01.72h.04a1.33 1.33 0 010 2.67h-.07a1.1 1.1 0 00-1.01.72z" />
+          </svg>
+          <span>Settings</span>
         </button>
         <div className="sidebar-resize-handle" onMouseDown={onResizeStart} />
       </aside>
@@ -1958,7 +2072,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
                   setShowTrash(false);
                   setShowLinkGraph(false);
                   setShowTemplates(false);
-
+                  setShowSettings(false);
                   doContentSearch(e.target.value);
                 }}
                 placeholder="Search documents & content..."
@@ -2126,6 +2240,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
                       "spreadsheet",
                       "kanban",
                       "code",
+                      "grid",
                     ] as DocumentType[]
                   )
                     .filter((type) => type !== "tldraw" || config.enableTldraw)
@@ -2144,6 +2259,28 @@ export function Dashboard({ config }: { config: AppConfig }) {
                         </button>
                       );
                     })}
+                  {templates.length > 0 && (
+                    <>
+                      <div className="new-dropdown-divider" />
+                      <div className="new-dropdown-section-label">
+                        From Template
+                      </div>
+                      {templates.map((t) => (
+                        <button
+                          key={t.id}
+                          onClick={() => {
+                            useTemplate(t.id);
+                            setNewDropdownOpen(false);
+                          }}
+                        >
+                          <span style={{ display: "flex", opacity: 0.6 }}>
+                            <IconTemplate />
+                          </span>
+                          <span>{t.name}</span>
+                        </button>
+                      ))}
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -2175,7 +2312,12 @@ export function Dashboard({ config }: { config: AppConfig }) {
           quickly.
         </p>
 
-        {showLinkGraph ? (
+        {showSettings ? (
+          <SettingsPage
+            onClose={() => setShowSettings(false)}
+            isElectron={config.isElectron}
+          />
+        ) : showLinkGraph && config.enableLinking ? (
           <LinkGraph onClose={() => setShowLinkGraph(false)} />
         ) : showTemplates ? (
           <section className="templates-view">
@@ -2436,15 +2578,38 @@ export function Dashboard({ config }: { config: AppConfig }) {
                     key={doc.id}
                     className="doc-grid__card"
                     style={{ borderTopColor: typeConf.color }}
-                    onClick={() => openDoc(doc)}
                   >
-                    <div
-                      className="doc-grid__icon"
-                      style={{ color: typeConf.color }}
+                    <ClickOrDouble
+                      className="doc-grid__clickable"
+                      onSingleClick={() => openDoc(doc)}
+                      onDoubleClick={() => startRename(doc.id, "doc", doc.name)}
                     >
-                      <TypeIcon />
-                    </div>
-                    <span className="doc-grid__name">{doc.name}</span>
+                      <div
+                        className="doc-grid__icon"
+                        style={{ color: typeConf.color }}
+                      >
+                        <TypeIcon />
+                      </div>
+                      {renameTarget?.id === doc.id ? (
+                        <input
+                          className="doc-grid__rename-input"
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onBlur={finishRename}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") finishRename();
+                            if (e.key === "Escape") {
+                              renameCancelled.current = true;
+                              setRenameTarget(null);
+                            }
+                          }}
+                          autoFocus
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        <span className="doc-grid__name">{doc.name}</span>
+                      )}
+                    </ClickOrDouble>
                     <span
                       className="doc-grid__type"
                       style={{ color: typeConf.color }}

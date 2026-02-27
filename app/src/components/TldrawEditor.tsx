@@ -3,10 +3,12 @@ import { EditorShell } from "./EditorShell";
 import {
   Tldraw,
   Editor,
-  TLStoreSnapshot,
+  TLEditorSnapshot,
   createTLStore,
   defaultShapeUtils,
   TLRecord,
+  loadSnapshot,
+  getSnapshot,
 } from "tldraw";
 import { createTldrawAdapter } from "./ai/EditorAdapter";
 import type { EditorAdapter } from "./ai/EditorAdapter";
@@ -25,7 +27,7 @@ export function TldrawEditor({
   initialFolderId,
 }: TldrawEditorProps) {
   const [initialSnapshot, setInitialSnapshot] = useState<
-    TLStoreSnapshot | null | undefined
+    TLEditorSnapshot | null | undefined
   >(undefined);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [saveStatus, setSaveStatus] = useState<
@@ -54,11 +56,8 @@ export function TldrawEditor({
 
       if (data.snapshot) {
         isRemoteChange.current = true;
-        editor.store.loadSnapshot(data.snapshot);
+        loadSnapshot(editor.store, data.snapshot);
         isRemoteChange.current = false;
-        console.log(
-          "[Sync] Reloaded document from server after inactive session",
-        );
       }
     } catch (error) {
       console.error("Failed to reload document:", error);
@@ -108,7 +107,7 @@ export function TldrawEditor({
 
     const newStore = createTLStore({ shapeUtils: customShapeUtils });
     if (initialSnapshot) {
-      newStore.loadSnapshot(initialSnapshot);
+      loadSnapshot(newStore, initialSnapshot);
     }
     return newStore;
   }, [initialSnapshot]);
@@ -199,8 +198,8 @@ export function TldrawEditor({
     async (editorInstance: Editor, options?: { includeFolder?: boolean }) => {
       setSaveStatus("saving");
       try {
-        const snapshot = editorInstance.store.getSnapshot();
-        const payload: { snapshot: TLStoreSnapshot; folderId?: string } = {
+        const snapshot = getSnapshot(editorInstance.store);
+        const payload: { snapshot: TLEditorSnapshot; folderId?: string } = {
           snapshot,
         };
         if (options?.includeFolder && initialFolderId) {

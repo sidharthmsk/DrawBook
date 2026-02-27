@@ -16,6 +16,7 @@ data/
 
 app/node_modules/
 app/dist/
+app/release/
 app/.env
 app/.env.*
 !app/env.example

@@ -5,6 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
@@ -34,10 +35,12 @@ function typeFromId(id: string): DocumentType {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load env file in both dev and production runs.
-dotenv.config({ path: path.resolve(process.cwd(), ".env") });
-if (!process.env.MINIO_ENDPOINT_URL && !process.env.MINIO_ENDPOINT) {
-  dotenv.config({ path: path.resolve(process.cwd(), "../.env") });
+// Load env file in web/Docker mode only -- Electron sets its own env vars.
+if (!process.env.ELECTRON) {
+  dotenv.config({ path: path.resolve(process.cwd(), ".env") });
+  if (!process.env.MINIO_ENDPOINT_URL && !process.env.MINIO_ENDPOINT) {
+    dotenv.config({ path: path.resolve(process.cwd(), "../.env") });
+  }
 }
 
 const APP_PASSWORD = process.env.APP_PASSWORD || "";
@@ -47,6 +50,8 @@ const AUTH_TOKEN = APP_PASSWORD
 
 const ENABLE_TLDRAW =
   (process.env.ENABLE_TLDRAW || "false").toLowerCase() === "true";
+const ENABLE_LINKING =
+  (process.env.ENABLE_LINKING || "false").toLowerCase() === "true";
 
 function requireAuth(
   req: express.Request,
@@ -176,12 +181,217 @@ app.get("/api/auth/check", (req, res) => {
   res.json({ authenticated: valid, required: true });
 });
 
+const ENV_FILE_PATH = process.env.ELECTRON
+  ? path.resolve(process.env.DATA_DIR || ".", "..", ".env")
+  : fs.existsSync(path.resolve(process.cwd(), ".env"))
+    ? path.resolve(process.cwd(), ".env")
+    : path.resolve(process.cwd(), "../.env");
+
+const STORAGE_BACKEND =
+  process.env.STORAGE_BACKEND?.toLowerCase() ||
+  (process.env.MINIO_ACCESS_KEY &&
+  process.env.MINIO_SECRET_KEY &&
+  (process.env.MINIO_ENDPOINT_URL || process.env.MINIO_ENDPOINT)
+    ? "minio"
+    : "local");
+
 app.get("/api/config", (_req, res) => {
-  res.json({ enableTldraw: ENABLE_TLDRAW });
+  res.json({
+    enableTldraw: ENABLE_TLDRAW,
+    enableLinking: ENABLE_LINKING,
+    storageBackend: STORAGE_BACKEND,
+    isElectron: !!process.env.ELECTRON,
+  });
 });
 
 // Protect all other /api routes
 app.use("/api", requireAuth);
+
+// ============ SETTINGS ENDPOINTS ============
+
+const ENV_KEY_MAP: Record<string, string> = {
+  appPassword: "APP_PASSWORD",
+  enableTldraw: "ENABLE_TLDRAW",
+  enableLinking: "ENABLE_LINKING",
+  corsOrigins: "CORS_ORIGINS",
+  storageBackend: "STORAGE_BACKEND",
+  minioEndpointUrl: "MINIO_ENDPOINT_URL",
+  minioAccessKey: "MINIO_ACCESS_KEY",
+  minioSecretKey: "MINIO_SECRET_KEY",
+  minioBucket: "MINIO_BUCKET",
+  minioRegion: "MINIO_REGION",
+  minioPrefix: "MINIO_PREFIX",
+  groqApiKey: "GROQ_API_KEY",
+};
+
+const SECRET_FIELDS = new Set([
+  "appPassword",
+  "minioAccessKey",
+  "minioSecretKey",
+  "groqApiKey",
+]);
+
+function maskSecret(val: string): string {
+  if (!val || val.length <= 4) return val ? "****" : "";
+  return "****" + val.slice(-4);
+}
+
+function parseEnvFile(content: string): {
+  lines: string[];
+  vars: Record<string, string>;
+} {
+  const lines = content.split("\n");
+  const vars: Record<string, string> = {};
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    const val = trimmed.slice(eqIdx + 1).trim();
+    vars[key] = val;
+  }
+  return { lines, vars };
+}
+
+function writeEnvFile(
+  filePath: string,
+  existingContent: string,
+  updates: Record<string, string>,
+): string {
+  const lines = existingContent.split("\n");
+  const written = new Set<string>();
+  const result: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      // Check if the next uncommented key is one we're updating
+      // If this is a "# KEY=" comment and we have an update, uncomment it
+      const commentMatch = trimmed.match(/^#\s*([A-Z_]+)\s*=/);
+      if (commentMatch && commentMatch[1] in updates) {
+        const key = commentMatch[1];
+        result.push(`${key}=${updates[key]}`);
+        written.add(key);
+      } else {
+        result.push(line);
+      }
+      continue;
+    }
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx === -1) {
+      result.push(line);
+      continue;
+    }
+    const key = trimmed.slice(0, eqIdx).trim();
+    if (key in updates) {
+      result.push(`${key}=${updates[key]}`);
+      written.add(key);
+    } else {
+      result.push(line);
+    }
+  }
+
+  // Append any keys not already in the file
+  for (const [key, val] of Object.entries(updates)) {
+    if (!written.has(key)) {
+      result.push(`${key}=${val}`);
+    }
+  }
+
+  return result.join("\n");
+}
+
+app.get("/api/settings", (req, res) => {
+  try {
+    let envContent = "";
+    try {
+      envContent = fs.readFileSync(ENV_FILE_PATH, "utf-8");
+    } catch {
+      // .env may not exist yet
+    }
+    const { vars } = parseEnvFile(envContent);
+
+    const settings: Record<string, string> = {};
+    for (const [camelKey, envKey] of Object.entries(ENV_KEY_MAP)) {
+      const raw = vars[envKey] ?? process.env[envKey] ?? "";
+      settings[camelKey] = SECRET_FIELDS.has(camelKey) ? maskSecret(raw) : raw;
+    }
+
+    res.json({
+      ...settings,
+      hasPassword: !!APP_PASSWORD,
+      hasGroqKey: !!process.env.GROQ_API_KEY,
+      hasMinioCredentials: !!(
+        process.env.MINIO_ACCESS_KEY &&
+        process.env.MINIO_SECRET_KEY &&
+        (process.env.MINIO_ENDPOINT_URL || process.env.MINIO_ENDPOINT)
+      ),
+    });
+  } catch (error) {
+    console.error("[Server] Settings read error:", error);
+    res.status(500).json({ error: "Failed to read settings" });
+  }
+});
+
+app.put("/api/settings", (req, res) => {
+  try {
+    const body = req.body as Record<string, unknown>;
+
+    // Password change validation
+    if (body.appPassword !== undefined) {
+      const newPassword = String(body.appPassword);
+      const currentPassword = String(body.currentPassword || "");
+      if (APP_PASSWORD && currentPassword !== APP_PASSWORD) {
+        return res.status(400).json({ error: "Current password is incorrect" });
+      }
+      body.appPassword = newPassword;
+      delete body.currentPassword;
+    }
+
+    // Build env updates
+    const envUpdates: Record<string, string> = {};
+    for (const [camelKey, envKey] of Object.entries(ENV_KEY_MAP)) {
+      if (camelKey in body) {
+        const val = String(body[camelKey] ?? "");
+        // Skip masked values (user didn't change the secret)
+        if (SECRET_FIELDS.has(camelKey) && val.startsWith("****")) continue;
+        envUpdates[envKey] = val;
+      }
+    }
+
+    if (Object.keys(envUpdates).length === 0) {
+      return res.json({ success: true, restart: false });
+    }
+
+    let existingContent = "";
+    try {
+      existingContent = fs.readFileSync(ENV_FILE_PATH, "utf-8");
+    } catch {
+      // .env may not exist yet
+    }
+
+    const newContent = writeEnvFile(ENV_FILE_PATH, existingContent, envUpdates);
+    fs.writeFileSync(ENV_FILE_PATH, newContent, "utf-8");
+
+    if (process.env.ELECTRON) {
+      for (const [key, val] of Object.entries(envUpdates)) {
+        process.env[key] = val;
+      }
+      console.log("[Server] Settings updated (applied in-process).");
+      res.json({ success: true, restart: false });
+    } else {
+      console.log("[Server] Settings updated, restarting...");
+      res.json({ success: true, restart: true });
+      setTimeout(() => {
+        process.exit(0);
+      }, 500);
+    }
+  } catch (error) {
+    console.error("[Server] Settings write error:", error);
+    res.status(500).json({ error: "Failed to save settings" });
+  }
+});
 
 // AI routes
 app.use("/api/ai", createAiRouter());
@@ -910,8 +1120,74 @@ function extractText(doc: any, type: string): string {
   if (type === "drawio") {
     return typeof doc === "string" ? doc : JSON.stringify(doc);
   }
+  if (type === "code") {
+    const lang = doc?.language || "code";
+    return doc?.content ? `${lang} file:\n${doc.content}` : "";
+  }
+  if (type === "grid") {
+    const cols: Array<{ id: string; name: string }> = doc?.columns || [];
+    const rows: Array<{ id: string; cells: Record<string, unknown> }> =
+      doc?.rows || [];
+    if (cols.length === 0) return "";
+    const header = cols.map((c) => c.name).join(" | ");
+    const body = rows
+      .slice(0, 100)
+      .map((r) =>
+        cols
+          .map((c) => {
+            const v = r.cells?.[c.id];
+            if (v === null || v === undefined) return "";
+            if (Array.isArray(v)) return v.join(", ");
+            return String(v);
+          })
+          .join(" | "),
+      )
+      .join("\n");
+    return `Table:\n${header}\n${body}`;
+  }
+  if (type === "spreadsheet") {
+    const sheets = doc?.sheets;
+    if (!sheets || typeof sheets !== "object") return "";
+    const parts: string[] = [];
+    for (const [, sheet] of Object.entries(sheets) as [string, any][]) {
+      const cellData = sheet.cellData;
+      if (!cellData) continue;
+      for (const [rowIdx, row] of Object.entries(cellData) as [string, any][]) {
+        if (!row) continue;
+        for (const [colIdx, cell] of Object.entries(row) as [string, any][]) {
+          const val = (cell as any)?.v;
+          if (val !== undefined && val !== null && val !== "") {
+            parts.push(`[${rowIdx},${colIdx}]: ${String(val).slice(0, 100)}`);
+          }
+        }
+      }
+      break;
+    }
+    return parts.length > 0 ? `Spreadsheet:\n${parts.join("\n")}` : "";
+  }
   return "";
 }
+
+app.get("/api/document-context/:documentId", async (req, res) => {
+  try {
+    const { documentId } = req.params;
+    const meta = await storage.loadDocMeta(documentId);
+    const type = meta.type || typeFromId(documentId);
+    const name = meta.name || documentId;
+    const doc = await storage.loadDocument(documentId);
+    if (!doc) {
+      return res.json({ name, type, context: "Document is empty." });
+    }
+    const text = extractText(doc, type);
+    const context = text
+      ? `[${type}: "${name}"]\n${text.slice(0, 5000)}`
+      : `[${type}: "${name}"] (empty)`;
+    res.json({ name, type, context });
+  } catch (err) {
+    console.error("[Server] Document context error:", err);
+    res.status(500).json({ error: "Failed to load document context" });
+  }
+});
 
 // Duplicate document endpoint
 app.post("/api/duplicate/:documentId", async (req, res) => {
@@ -1048,14 +1324,18 @@ app.post("/api/rename/:documentId", async (req, res) => {
     const { documentId } = req.params;
     const { newName } = req.body;
 
-    if (!newName) {
+    if (!newName || !newName.trim()) {
       return res.status(400).json({ error: "New name is required" });
     }
 
-    const newDocumentId = newName
-      .toLowerCase()
-      .replace(/[^a-z0-9-]/g, "-")
-      .replace(/-+/g, "-");
+    const newDocumentId =
+      newName
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-+/, "")
+        .replace(/-+$/, "") || "untitled";
 
     if (!(await storage.existsDocument(documentId))) {
       return res.status(404).json({ error: "Document not found" });
@@ -1812,29 +2092,35 @@ app.get("*", (_req, res) => {
   res.sendFile(path.join(clientPath, "index.html"));
 });
 
-const PORT = process.env.PORT || 3000;
-const storageBackend =
-  process.env.STORAGE_BACKEND?.toLowerCase() ||
-  (process.env.MINIO_ACCESS_KEY &&
-  process.env.MINIO_SECRET_KEY &&
-  (process.env.MINIO_ENDPOINT_URL || process.env.MINIO_ENDPOINT)
-    ? "minio(auto)"
-    : "local(auto)");
+export async function startServer(overrides?: {
+  port?: number;
+  dataDir?: string;
+}): Promise<number> {
+  if (overrides?.port) process.env.PORT = String(overrides.port);
+  if (overrides?.dataDir) process.env.DATA_DIR = overrides.dataDir;
 
-storage
-  .init()
-  .then(() => {
-    console.log(`[Server] Storage backend: ${storageBackend}`);
-    server.listen(PORT, () => {
+  const port = Number(process.env.PORT) || 3000;
+
+  await storage.init();
+  console.log(`[Server] Storage backend: ${STORAGE_BACKEND}`);
+
+  return new Promise((resolve, reject) => {
+    server.listen(port, () => {
       console.log(
-        `[Server] Drawbook server running on http://localhost:${PORT}`,
+        `[Server] Drawbook server running on http://localhost:${port}`,
       );
       console.log(
-        `[Server] WebSocket server running on ws://localhost:${PORT}/ws`,
+        `[Server] WebSocket server running on ws://localhost:${port}/ws`,
       );
+      resolve(port);
     });
-  })
-  .catch((error) => {
+    server.on("error", reject);
+  });
+}
+
+if (!process.env.ELECTRON) {
+  startServer().catch((error) => {
     console.error("[Server] Failed to initialize storage:", error);
     process.exit(1);
   });
+}
