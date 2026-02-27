@@ -25,6 +25,8 @@ A self-hosted workspace that brings multiple creative and productivity tools und
 - **Optional password protection**
 - **Docker-ready** with health checks and resource limits
 - **AI-powered features** — turn wireframes into working UI, chat with an AI assistant, get design suggestions, and describe canvas content (powered by Groq + Kimi K2)
+- **[[Wiki-links]]** — optional inter-document linking with a link graph, backlinks, and `[[name]]` resolution (enable in Settings)
+- **Desktop app** — runs as an Electron app with local data storage
 
 ## Quick Start
 
@@ -58,6 +60,16 @@ npm run build
 npm start
 ```
 
+### Desktop (Electron)
+
+```bash
+cd app
+npm run electron:dev        # dev build + launch
+npm run electron:pack       # package for macOS
+```
+
+The packaged app stores data in the OS user-data directory and runs its own local server.
+
 ## Configuration
 
 Copy `app/env.example` to `app/.env` and adjust:
@@ -68,6 +80,7 @@ Copy `app/env.example` to `app/.env` and adjust:
 | `DATA_DIR` | `./data` | Local storage directory |
 | `APP_PASSWORD` | *(unset)* | Set to enable password protection |
 | `ENABLE_TLDRAW` | `false` | Set to `true` to enable the tldraw whiteboard (requires a [tldraw license](https://tldraw.dev) for production) |
+| `ENABLE_LINKING` | `false` | Set to `true` to enable [[wiki-links]], link graph, and backlinks |
 | `STORAGE_BACKEND` | *(auto)* | `local` or `minio` — auto-detects when MinIO vars are present |
 | `MINIO_ENDPOINT_URL` | — | Full URL to S3/MinIO endpoint (e.g. `http://minio:9000`) |
 | `MINIO_ACCESS_KEY` | — | S3 access key |
@@ -96,6 +109,11 @@ drawbook/
 │   │   ├── index.ts          # Express + WebSocket server
 │   │   ├── storage.ts        # Local & S3 storage adapters
 │   │   └── ai.ts             # AI features (Groq + Kimi K2)
+│   ├── electron/
+│   │   ├── main.ts           # Electron main process
+│   │   └── preload.cjs       # Preload script
+│   ├── build/                # App icons (png, icns, ico)
+│   ├── electron-builder.yml  # Electron packaging config
 │   ├── Dockerfile
 │   ├── env.example
 │   └── package.json
@@ -121,6 +139,11 @@ All endpoints are prefixed with `/api` and protected by `APP_PASSWORD` when set.
 | `GET/POST` | `/api/folders` | List / create folders |
 | `POST` | `/api/bulk/move` | Bulk move documents |
 | `POST` | `/api/bulk/delete` | Bulk delete documents |
+| `GET` | `/api/resolve` | Resolve a document name to its ID (for [[links]]) |
+| `GET` | `/api/backlinks/:id` | List documents that link to this one |
+| `GET` | `/api/link-graph` | Full node/edge graph of inter-document links |
+| `GET` | `/api/config` | Public app config (feature flags) |
+| `GET/PUT` | `/api/settings` | Read / update server settings |
 | `POST` | `/api/ai/generate-ui` | Generate UI prototype from wireframe descriptions |
 | `POST` | `/api/ai/chat` | Chat with AI assistant |
 | `POST` | `/api/ai/describe` | Describe canvas contents |
