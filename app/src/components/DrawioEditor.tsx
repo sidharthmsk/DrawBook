@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { EditableTitle } from "./EditableTitle";
+import { EditorShell } from "./EditorShell";
+import { createDrawioAdapter } from "./ai/EditorAdapter";
+import type { EditorAdapter } from "./ai/EditorAdapter";
 
 interface DrawioEditorProps {
   documentId: string;
@@ -16,6 +18,11 @@ export function DrawioEditor({ documentId }: DrawioEditorProps) {
   const [loading, setLoading] = useState(true);
   const xmlRef = useRef<string>("");
   const initializedRef = useRef(false);
+  const [adapter, setAdapter] = useState<EditorAdapter | null>(null);
+
+  useEffect(() => {
+    setAdapter(createDrawioAdapter(xmlRef));
+  }, []);
 
   useEffect(() => {
     fetch(`/api/load/${documentId}`)
@@ -87,57 +94,26 @@ export function DrawioEditor({ documentId }: DrawioEditorProps) {
   }, [saveToServer]);
 
   return (
-    <div className="editor-wrapper">
-      <div className="editor-topbar">
-        <button
-          className="editor-back-btn"
-          onClick={() => (window.location.href = "/")}
+    <EditorShell
+      documentId={documentId}
+      adapter={adapter}
+      saveStatus={saveStatus}
+    >
+      {loading && (
+        <div
+          className="editor-loading"
+          style={{ position: "absolute", inset: 0, zIndex: 10 }}
         >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M10 12L6 8l4-4" />
-          </svg>
-          Back
-        </button>
-        <EditableTitle documentId={documentId} />
-        <div className="editor-topbar__status">
-          <span
-            className={`editor-status-dot editor-status-dot--${saveStatus === "error" ? "error" : saveStatus === "saved" ? "saved" : "saving"}`}
-          />
-          <span>
-            {saveStatus === "saved"
-              ? "Saved"
-              : saveStatus === "saving"
-                ? "Saving..."
-                : "Error"}
-          </span>
+          <div className="editor-loading__spinner" />
+          Loading Draw.io...
         </div>
-      </div>
-      <div className="editor-canvas">
-        {loading && (
-          <div
-            className="editor-loading"
-            style={{ position: "absolute", inset: 0, zIndex: 10 }}
-          >
-            <div className="editor-loading__spinner" />
-            Loading Draw.io...
-          </div>
-        )}
-        <iframe
-          ref={iframeRef}
-          src={DRAWIO_URL}
-          style={{ width: "100%", height: "100%", border: "none" }}
-          title="Draw.io Editor"
-        />
-      </div>
-    </div>
+      )}
+      <iframe
+        ref={iframeRef}
+        src={DRAWIO_URL}
+        style={{ width: "100%", height: "100%", border: "none" }}
+        title="Draw.io Editor"
+      />
+    </EditorShell>
   );
 }
