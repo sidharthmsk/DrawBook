@@ -15,6 +15,7 @@ import {
   DocumentType,
   Folder,
 } from "./storage.js";
+import { createAiRouter } from "./ai.js";
 
 function typeFromId(id: string): DocumentType {
   if (id.startsWith("excalidraw-")) return "excalidraw";
@@ -178,6 +179,9 @@ app.get("/api/config", (_req, res) => {
 
 // Protect all other /api routes
 app.use("/api", requireAuth);
+
+// AI routes
+app.use("/api/ai", createAiRouter());
 
 const storage = createStorageAdapter();
 const upload = multer({

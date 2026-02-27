@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
-import { EditableTitle } from "./EditableTitle";
+import { EditorShell } from "./EditorShell";
 import {
   Tldraw,
   Editor,
@@ -8,6 +8,8 @@ import {
   defaultShapeUtils,
   TLRecord,
 } from "tldraw";
+import { createTldrawAdapter } from "./ai/EditorAdapter";
+import type { EditorAdapter } from "./ai/EditorAdapter";
 
 interface TldrawEditorProps {
   documentId: string;
@@ -25,12 +27,12 @@ export function TldrawEditor({
   const [saveStatus, setSaveStatus] = useState<
     "saved" | "saving" | "error" | "syncing"
   >("saved");
+  const [adapter, setAdapter] = useState<EditorAdapter | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const isRemoteChange = useRef(false);
   const lastActiveTime = useRef<number>(Date.now());
   const initialSaveDone = useRef(false);
 
-  // Reload document from server
   const reloadFromServer = useCallback(async () => {
     if (!editor) return;
 
@@ -51,20 +53,16 @@ export function TldrawEditor({
     }
   }, [editor, documentId]);
 
-  // Reload on visibility change (when tab becomes active after being inactive)
   useEffect(() => {
     if (!editor) return;
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         const inactiveTime = Date.now() - lastActiveTime.current;
-        // Reload if inactive for more than 5 seconds
         if (inactiveTime > 5000) {
           reloadFromServer();
         }
-        // Reconnect WebSocket if it was closed
         if (wsRef.current && wsRef.current.readyState !== WebSocket.OPEN) {
-          // Force a page reload to reconnect cleanly
           window.location.reload();
         }
       } else {
@@ -79,7 +77,6 @@ export function TldrawEditor({
     };
   }, [editor, reloadFromServer]);
 
-  // Load initial snapshot
   useEffect(() => {
     async function loadDocument() {
       try {
@@ -94,7 +91,6 @@ export function TldrawEditor({
     loadDocument();
   }, [documentId]);
 
-  // Create store with snapshot
   const store = useMemo(() => {
     if (initialSnapshot === undefined) return undefined;
 
@@ -105,7 +101,6 @@ export function TldrawEditor({
     return newStore;
   }, [initialSnapshot]);
 
-  // Connect to WebSocket for live sync
   useEffect(() => {
     if (!editor) return;
 
@@ -127,20 +122,16 @@ export function TldrawEditor({
         if (message.type === "changes") {
           isRemoteChange.current = true;
 
-          // Apply remote changes
           const { added, updated, removed } = message.changes;
 
           editor.store.mergeRemoteChanges(() => {
-            // Handle removed - it's an object with record IDs as keys
             if (removed && Object.keys(removed).length > 0) {
               const idsToRemove = Object.keys(removed) as TLRecord["id"][];
               editor.store.remove(idsToRemove);
             }
-            // Handle added - it's an object with record IDs as keys
             if (added && Object.keys(added).length > 0) {
               editor.store.put(Object.values(added) as TLRecord[]);
             }
-            // Handle updated - it's an object with [before, after] pairs
             if (updated && Object.keys(updated).length > 0) {
               const updates = Object.values(updated).map((u: any) => u[1]);
               editor.store.put(updates as TLRecord[]);
@@ -168,13 +159,11 @@ export function TldrawEditor({
     };
   }, [editor, documentId]);
 
-  // Listen for local changes and broadcast
   useEffect(() => {
     if (!editor || !wsRef.current) return;
 
     const unsubscribe = editor.store.listen(
       (entry) => {
-        // Don't broadcast changes that came from remote
         if (isRemoteChange.current) return;
 
         const ws = wsRef.current;
@@ -194,7 +183,6 @@ export function TldrawEditor({
     };
   }, [editor]);
 
-  // Save function
   const saveDocument = useCallback(
     async (editorInstance: Editor, options?: { includeFolder?: boolean }) => {
       setSaveStatus("saving");
@@ -225,7 +213,6 @@ export function TldrawEditor({
     [documentId, initialFolderId],
   );
 
-  // Create a new document file immediately, so untouched drawings persist too.
   useEffect(() => {
     if (!editor || initialSnapshot === undefined || initialSaveDone.current)
       return;
@@ -239,7 +226,6 @@ export function TldrawEditor({
     initialSaveDone.current = false;
   }, [documentId]);
 
-  // Auto-save on changes (debounced)
   useEffect(() => {
     if (!editor) return;
 
@@ -263,6 +249,7 @@ export function TldrawEditor({
 
   const handleMount = useCallback((editorInstance: Editor) => {
     setEditor(editorInstance);
+    setAdapter(createTldrawAdapter(editorInstance));
   }, []);
 
   if (store === undefined) {
@@ -274,53 +261,13 @@ export function TldrawEditor({
     );
   }
 
-  const statusLabel =
-    saveStatus === "saved"
-      ? "Saved"
-      : saveStatus === "saving"
-        ? "Saving..."
-        : saveStatus === "syncing"
-          ? "Syncing..."
-          : "Error";
-  const dotClass =
-    saveStatus === "error"
-      ? "error"
-      : saveStatus === "saved"
-        ? "saved"
-        : "saving";
-
   return (
-    <div className="editor-wrapper">
-      <div className="editor-topbar">
-        <button
-          className="editor-back-btn"
-          onClick={() => (window.location.href = "/")}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M10 12L6 8l4-4" />
-          </svg>
-          Back
-        </button>
-        <EditableTitle documentId={documentId} />
-        <div className="editor-topbar__status">
-          <span
-            className={`editor-status-dot editor-status-dot--${dotClass}`}
-          />
-          <span>{statusLabel}</span>
-        </div>
-      </div>
-      <div className="editor-canvas">
-        <Tldraw store={store} onMount={handleMount} autoFocus />
-      </div>
-    </div>
+    <EditorShell
+      documentId={documentId}
+      adapter={adapter}
+      saveStatus={saveStatus}
+    >
+      <Tldraw store={store} onMount={handleMount} autoFocus />
+    </EditorShell>
   );
 }
