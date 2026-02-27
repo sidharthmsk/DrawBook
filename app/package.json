@@ -13,7 +13,9 @@
     "build:electron": "tsc -p electron/tsconfig.json && cp electron/preload.cjs dist/electron/preload.cjs",
     "start": "node dist/server/index.js",
     "electron:dev": "npm run build && npm run build:electron && electron .",
-    "electron:pack": "npm run build && npm run build:electron && electron-builder --mac --dir"
+    "electron:pack": "npm run build && npm run build:electron && electron-builder --mac --dir",
+    "electron:dist": "npm run build && npm run build:electron && electron-builder --mac",
+    "electron:publish": "npm run build && npm run build:electron && electron-builder --mac --publish always"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.991.0",
