@@ -9,6 +9,14 @@ import {
 
 type DocumentType = "tldraw" | "excalidraw" | "drawio" | "markdown" | "pdf";
 
+function typeFromId(id: string): DocumentType {
+  if (id.startsWith("excalidraw-")) return "excalidraw";
+  if (id.startsWith("drawio-")) return "drawio";
+  if (id.startsWith("markdown-")) return "markdown";
+  if (id.startsWith("pdf-")) return "pdf";
+  return "tldraw";
+}
+
 interface DocumentItem {
   id: string;
   name: string;
@@ -20,10 +28,61 @@ interface DocumentItem {
 interface Folder {
   id: string;
   name: string;
+  parentId: string | null;
   createdAt: string;
 }
 
 type RenameTarget = { id: string; kind: "doc" | "folder" } | null;
+
+interface FolderNode {
+  folder: Folder;
+  children: FolderNode[];
+  depth: number;
+}
+
+function buildFolderTree(folders: Folder[]): FolderNode[] {
+  const byParent = new Map<string | null, Folder[]>();
+  for (const f of folders) {
+    const key = f.parentId ?? "__root__";
+    const list = byParent.get(key) || [];
+    list.push(f);
+    byParent.set(key, list);
+  }
+  const build = (parentId: string | null, depth: number): FolderNode[] => {
+    const key = parentId ?? "__root__";
+    return (byParent.get(key) || []).map((f) => ({
+      folder: f,
+      children: build(f.id, depth + 1),
+      depth,
+    }));
+  };
+  return build(null, 0);
+}
+
+function flattenTree(nodes: FolderNode[]): FolderNode[] {
+  const out: FolderNode[] = [];
+  for (const n of nodes) {
+    out.push(n);
+    out.push(...flattenTree(n.children));
+  }
+  return out;
+}
+
+const IconTreeChevron = ({ expanded }: { expanded: boolean }) => (
+  <svg
+    className={`tree-chevron ${expanded ? "tree-chevron--open" : ""}`}
+    width="12"
+    height="12"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M6 4l4 4-4 4" />
+  </svg>
+);
 
 const TYPE_CONFIG: Record<DocumentType, { label: string; color: string }> = {
   tldraw: { label: "tldraw", color: "var(--accent)" },
@@ -284,6 +343,39 @@ function ClickOrDouble({
   );
 }
 
+function FolderTreeMenu({
+  folders,
+  onSelect,
+  depth,
+}: {
+  folders: FolderNode[];
+  onSelect: (folderId: string | null) => void;
+  depth: number;
+}) {
+  return (
+    <>
+      {folders.map((node) => (
+        <div key={node.folder.id}>
+          <button
+            style={{ paddingLeft: 10 + depth * 14 }}
+            onClick={() => onSelect(node.folder.id)}
+          >
+            <IconFolder />
+            <span style={{ marginLeft: 6 }}>{node.folder.name}</span>
+          </button>
+          {node.children.length > 0 && (
+            <FolderTreeMenu
+              folders={node.children}
+              onSelect={onSelect}
+              depth={depth + 1}
+            />
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
 function DocContextMenu({
   doc,
   index,
@@ -294,7 +386,7 @@ function DocContextMenu({
   setMoveMenuDocId,
   moveMenuDocId,
   moveDocToFolder,
-  folders,
+  folderTree,
   setOpenMenuId,
 }: {
   doc: DocumentItem;
@@ -306,22 +398,53 @@ function DocContextMenu({
   setMoveMenuDocId: (fn: (v: string | null) => string | null) => void;
   moveMenuDocId: string | null;
   moveDocToFolder: (docId: string, folderId: string | null) => void;
-  folders: Folder[];
+  folderTree: FolderNode[];
   setOpenMenuId: (v: string | null) => void;
 }) {
+  const showMoveMenu = moveMenuDocId === doc.id;
   return (
     <div className="dropdown-menu" onClick={(e) => e.stopPropagation()}>
       <button onClick={() => openDoc(doc)}>Open</button>
       <button onClick={() => startRename(doc.id, "doc", doc.name)}>
         Rename
       </button>
-      <button
-        onClick={() =>
-          setMoveMenuDocId((current) => (current === doc.id ? null : doc.id))
-        }
-      >
-        Move to...
-      </button>
+      <div className="dropdown-menu__hover-parent">
+        <button
+          className="dropdown-menu__has-sub"
+          onClick={() =>
+            setMoveMenuDocId((current) => (current === doc.id ? null : doc.id))
+          }
+          onMouseEnter={() => setMoveMenuDocId(() => doc.id)}
+        >
+          Move to...
+          <svg
+            width="8"
+            height="8"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{ marginLeft: "auto" }}
+          >
+            <path d="M6 4l4 4-4 4" />
+          </svg>
+        </button>
+        {showMoveMenu && (
+          <div className="dropdown-popout" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => moveDocToFolder(doc.id, null)}>
+              <IconHome />
+              Home
+            </button>
+            <FolderTreeMenu
+              folders={folderTree}
+              onSelect={(fid) => moveDocToFolder(doc.id, fid)}
+              depth={0}
+            />
+          </div>
+        )}
+      </div>
       <button
         onClick={() => {
           toggleSelect(doc.id, index, false);
@@ -333,19 +456,6 @@ function DocContextMenu({
       <button className="danger" onClick={() => deleteDoc(doc.id)}>
         Delete
       </button>
-      {moveMenuDocId === doc.id && (
-        <div className="dropdown-submenu">
-          <button onClick={() => moveDocToFolder(doc.id, null)}>Home</button>
-          {folders.map((folder) => (
-            <button
-              key={folder.id}
-              onClick={() => moveDocToFolder(doc.id, folder.id)}
-            >
-              {folder.name}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -357,9 +467,10 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newFolderName, setNewFolderName] = useState("");
-  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [creatingFolder, setCreatingFolder] = useState<string | null>(null); // parentId or "__root__"
   const [renameTarget, setRenameTarget] = useState<RenameTarget>(null);
   const [renameValue, setRenameValue] = useState("");
+  const renameCancelled = useRef(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [draggingDocId, setDraggingDocId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -373,6 +484,41 @@ export function Dashboard() {
   const lastSelectedIndex = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const SIDEBAR_MIN = 200;
+  const SIDEBAR_MAX = 500;
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = localStorage.getItem("drawbook_sidebar_w");
+    return saved
+      ? Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Number(saved)))
+      : 260;
+  });
+  const resizing = useRef(false);
+
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem("drawbook_expanded_folders");
+      return saved ? new Set(JSON.parse(saved)) : new Set<string>();
+    } catch {
+      return new Set<string>();
+    }
+  });
+
+  const toggleExpand = useCallback((folderId: string) => {
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(folderId)) next.delete(folderId);
+      else next.add(folderId);
+      localStorage.setItem(
+        "drawbook_expanded_folders",
+        JSON.stringify([...next]),
+      );
+      return next;
+    });
+  }, []);
+
+  const folderTree = useMemo(() => buildFolderTree(folders), [folders]);
+  const flatFolders = useMemo(() => flattenTree(folderTree), [folderTree]);
+
   useEffect(() => {
     document.body.classList.add("dashboard-mode");
     document.documentElement.classList.add("dashboard-mode");
@@ -381,6 +527,40 @@ export function Dashboard() {
       document.documentElement.classList.remove("dashboard-mode");
     };
   }, []);
+
+  const onResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      resizing.current = true;
+      const startX = e.clientX;
+      const startW = sidebarWidth;
+
+      const onMove = (ev: MouseEvent) => {
+        if (!resizing.current) return;
+        const newW = Math.max(
+          SIDEBAR_MIN,
+          Math.min(SIDEBAR_MAX, startW + ev.clientX - startX),
+        );
+        setSidebarWidth(newW);
+      };
+      const onUp = () => {
+        resizing.current = false;
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        setSidebarWidth((w) => {
+          localStorage.setItem("drawbook_sidebar_w", String(w));
+          return w;
+        });
+      };
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    },
+    [sidebarWidth],
+  );
 
   const loadData = async () => {
     setLoading(true);
@@ -402,7 +582,7 @@ export function Dashboard() {
       setAllDocs(
         (docsData.documents || []).map((d: any) => ({
           ...d,
-          type: d.type || "tldraw",
+          type: d.type || typeFromId(d.id),
         })),
       );
     } catch (e) {
@@ -467,22 +647,46 @@ export function Dashboard() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const currentFolderName = currentFolder
-    ? folders.find((f) => f.id === currentFolder)?.name || "Folder"
-    : "Home";
+  const currentFolderName = useMemo(() => {
+    if (!currentFolder) return "Home";
+    const parts: string[] = [];
+    let cur: string | null = currentFolder;
+    while (cur) {
+      const f = folders.find((fo) => fo.id === cur);
+      if (!f) break;
+      parts.unshift(f.name);
+      cur = f.parentId;
+    }
+    return parts.join(" / ") || "Folder";
+  }, [currentFolder, folders]);
 
   const folderDocCounts = useMemo(() => {
-    const counts = new Map<string, number>();
+    const directCounts = new Map<string, number>();
     let rootCount = 0;
     for (const doc of allDocs) {
       if (doc.folderId) {
-        counts.set(doc.folderId, (counts.get(doc.folderId) || 0) + 1);
+        directCounts.set(
+          doc.folderId,
+          (directCounts.get(doc.folderId) || 0) + 1,
+        );
       } else {
         rootCount += 1;
       }
     }
-    return { counts, rootCount };
-  }, [allDocs]);
+    // Recursive counts (folder + all descendants)
+    const totalCounts = new Map<string, number>();
+    const computeTotal = (folderId: string): number => {
+      if (totalCounts.has(folderId)) return totalCounts.get(folderId)!;
+      let total = directCounts.get(folderId) || 0;
+      for (const f of folders) {
+        if (f.parentId === folderId) total += computeTotal(f.id);
+      }
+      totalCounts.set(folderId, total);
+      return total;
+    };
+    for (const f of folders) computeTotal(f.id);
+    return { counts: totalCounts, rootCount };
+  }, [allDocs, folders]);
 
   const visibleDocs = useMemo(() => {
     const byFolder = allDocs.filter((doc) => doc.folderId === currentFolder);
@@ -499,15 +703,27 @@ export function Dashboard() {
     e.preventDefault();
     if (!newFolderName.trim()) return;
 
+    const parentId = creatingFolder === "__root__" ? null : creatingFolder;
     try {
       const res = await fetch("/api/folders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newFolderName.trim() }),
+        body: JSON.stringify({ name: newFolderName.trim(), parentId }),
       });
       if (!res.ok) throw new Error("Create folder failed");
+      if (parentId) {
+        setExpandedFolders((prev) => {
+          const next = new Set(prev);
+          next.add(parentId);
+          localStorage.setItem(
+            "drawbook_expanded_folders",
+            JSON.stringify([...next]),
+          );
+          return next;
+        });
+      }
       setNewFolderName("");
-      setCreatingFolder(false);
+      setCreatingFolder(null);
       await loadData();
     } catch (err) {
       console.error("Failed to create folder:", err);
@@ -538,6 +754,8 @@ export function Dashboard() {
     }
   };
 
+  const [draggingFolderId, setDraggingFolderId] = useState<string | null>(null);
+
   const moveDocToFolder = async (docId: string, folderId: string | null) => {
     try {
       const res = await fetch(`/api/documents/${docId}/move`, {
@@ -555,6 +773,30 @@ export function Dashboard() {
       setDraggingDocId(null);
       setMoveMenuDocId(null);
       setOpenMenuId(null);
+    }
+  };
+
+  const moveFolderToParent = async (
+    folderId: string,
+    newParentId: string | null,
+  ) => {
+    if (folderId === newParentId) return;
+    try {
+      const res = await fetch(`/api/folders/${folderId}/move`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parentId: newParentId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        console.error("Move folder failed:", data.error);
+        return;
+      }
+      await loadData();
+    } catch (err) {
+      console.error("Failed to move folder:", err);
+    } finally {
+      setDraggingFolderId(null);
     }
   };
 
@@ -636,11 +878,16 @@ export function Dashboard() {
     kind: "doc" | "folder",
     currentName: string,
   ) => {
+    renameCancelled.current = false;
     setRenameTarget({ id, kind });
     setRenameValue(currentName);
   };
 
   const finishRename = async () => {
+    if (renameCancelled.current) {
+      renameCancelled.current = false;
+      return;
+    }
     if (!renameTarget) return;
     const value = renameValue.trim();
     if (!value) {
@@ -693,7 +940,10 @@ export function Dashboard() {
         />
       )}
 
-      <aside className={`dashboard-sidebar ${sidebarOpen ? "open" : ""}`}>
+      <aside
+        className={`dashboard-sidebar ${sidebarOpen ? "open" : ""}`}
+        style={{ width: sidebarWidth, minWidth: sidebarWidth }}
+      >
         <div className="dashboard-sidebar__top">
           <div className="dashboard-brand">
             <span className="dashboard-brand__dot" />
@@ -719,9 +969,13 @@ export function Dashboard() {
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
-            const droppedDoc =
-              e.dataTransfer.getData("text/plain") || draggingDocId;
-            if (droppedDoc) moveDocToFolder(droppedDoc, null);
+            if (draggingFolderId) {
+              moveFolderToParent(draggingFolderId, null);
+            } else {
+              const droppedDoc =
+                e.dataTransfer.getData("text/plain") || draggingDocId;
+              if (droppedDoc) moveDocToFolder(droppedDoc, null);
+            }
           }}
         >
           <IconHome />
@@ -733,7 +987,7 @@ export function Dashboard() {
           <p className="sidebar-section-label">Folders</p>
           <button
             className="sidebar-add-btn"
-            onClick={() => setCreatingFolder(true)}
+            onClick={() => setCreatingFolder("__root__")}
             aria-label="New folder"
           >
             <IconPlus />
@@ -741,7 +995,7 @@ export function Dashboard() {
         </div>
 
         <div className="folder-list">
-          {creatingFolder && (
+          {creatingFolder === "__root__" && (
             <form className="new-folder-inline" onSubmit={createFolder}>
               <IconFolder />
               <input
@@ -751,102 +1005,193 @@ export function Dashboard() {
                 autoFocus
                 onBlur={() => {
                   if (!newFolderName.trim()) {
-                    setCreatingFolder(false);
+                    setCreatingFolder(null);
                     setNewFolderName("");
                   }
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Escape") {
-                    setCreatingFolder(false);
+                    setCreatingFolder(null);
                     setNewFolderName("");
                   }
                 }}
               />
             </form>
           )}
-          {folders.map((folder) => {
+          {flatFolders.map((node) => {
+            const folder = node.folder;
+            const hasChildren = node.children.length > 0;
+            const isExpanded = expandedFolders.has(folder.id);
+            const isVisible =
+              node.depth === 0 ||
+              (() => {
+                let cur: string | null = folder.parentId;
+                while (cur) {
+                  if (!expandedFolders.has(cur)) return false;
+                  const parent = folders.find((f) => f.id === cur);
+                  cur = parent?.parentId ?? null;
+                }
+                return true;
+              })();
+            if (!isVisible) return null;
+
             const isRenaming =
               renameTarget?.id === folder.id && renameTarget.kind === "folder";
             return (
-              <div
-                key={folder.id}
-                className={`folder-item ${currentFolder === folder.id ? "active drop-target" : ""}`}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const droppedDoc =
-                    e.dataTransfer.getData("text/plain") || draggingDocId;
-                  if (droppedDoc) moveDocToFolder(droppedDoc, folder.id);
-                }}
-              >
-                {isRenaming ? (
-                  <input
-                    className="rename-input"
-                    value={renameValue}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    onBlur={finishRename}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") finishRename();
-                      if (e.key === "Escape") setRenameTarget(null);
-                    }}
-                    autoFocus
-                  />
-                ) : (
-                  <div className="folder-row">
-                    <button
-                      className="folder-link"
-                      onClick={() => {
-                        setCurrentFolder(folder.id);
-                        setSidebarOpen(false);
+              <div key={folder.id}>
+                <div
+                  className={`folder-item ${currentFolder === folder.id ? "active drop-target" : ""}`}
+                  style={{ paddingLeft: node.depth * 16 }}
+                  draggable
+                  onDragStart={(e) => {
+                    e.stopPropagation();
+                    setDraggingFolderId(folder.id);
+                    e.dataTransfer.setData("application/x-folder", folder.id);
+                    const ghost = document.createElement("div");
+                    ghost.textContent = folder.name;
+                    ghost.className = "drag-ghost";
+                    document.body.appendChild(ghost);
+                    e.dataTransfer.setDragImage(ghost, 0, 0);
+                    requestAnimationFrame(() => ghost.remove());
+                  }}
+                  onDragEnd={() => setDraggingFolderId(null)}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (draggingFolderId && draggingFolderId !== folder.id) {
+                      moveFolderToParent(draggingFolderId, folder.id);
+                    } else {
+                      const droppedDoc =
+                        e.dataTransfer.getData("text/plain") || draggingDocId;
+                      if (droppedDoc) moveDocToFolder(droppedDoc, folder.id);
+                    }
+                  }}
+                >
+                  {isRenaming ? (
+                    <input
+                      className="rename-input"
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onBlur={finishRename}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") finishRename();
+                        if (e.key === "Escape") {
+                          renameCancelled.current = true;
+                          setRenameTarget(null);
+                        }
                       }}
-                    >
-                      <IconFolder />
-                      <span className="folder-link-text">{folder.name}</span>
-                      <span className="folder-count">
-                        {folderDocCounts.counts.get(folder.id) || 0}
-                      </span>
-                    </button>
-                    <button
-                      className="icon-menu-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const menuId = `folder-${folder.id}`;
-                        setOpenMenuId((current) =>
-                          current === menuId ? null : menuId,
-                        );
-                        setMoveMenuDocId(null);
-                      }}
-                      aria-label={`Actions for ${folder.name}`}
-                    >
-                      <IconDots />
-                    </button>
-                  </div>
-                )}
+                      autoFocus
+                    />
+                  ) : (
+                    <div className="folder-row">
+                      <button
+                        className="tree-toggle"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (hasChildren) toggleExpand(folder.id);
+                        }}
+                        style={{
+                          visibility: hasChildren ? "visible" : "hidden",
+                        }}
+                      >
+                        <IconTreeChevron expanded={isExpanded} />
+                      </button>
+                      <button
+                        className="folder-link"
+                        onClick={() => {
+                          setCurrentFolder(folder.id);
+                          setSidebarOpen(false);
+                        }}
+                      >
+                        <IconFolder />
+                        <span className="folder-link-text">{folder.name}</span>
+                        <span className="folder-count">
+                          {folderDocCounts.counts.get(folder.id) || 0}
+                        </span>
+                      </button>
+                      <button
+                        className="icon-menu-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const menuId = `folder-${folder.id}`;
+                          setOpenMenuId((current) =>
+                            current === menuId ? null : menuId,
+                          );
+                          setMoveMenuDocId(null);
+                        }}
+                        aria-label={`Actions for ${folder.name}`}
+                      >
+                        <IconDots />
+                      </button>
+                    </div>
+                  )}
 
-                {openMenuId === `folder-${folder.id}` && (
-                  <div
-                    className="dropdown-menu"
-                    onClick={(e) => e.stopPropagation()}
+                  {openMenuId === `folder-${folder.id}` && (
+                    <div
+                      className="dropdown-menu"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        onClick={() =>
+                          startRename(folder.id, "folder", folder.name)
+                        }
+                      >
+                        Rename
+                      </button>
+                      <button
+                        onClick={() => {
+                          setCreatingFolder(folder.id);
+                          setOpenMenuId(null);
+                        }}
+                      >
+                        New subfolder
+                      </button>
+                      <button
+                        className="danger"
+                        onClick={() => deleteFolder(folder.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {creatingFolder === folder.id && (
+                  <form
+                    className="new-folder-inline"
+                    style={{ paddingLeft: (node.depth + 1) * 16 + 10 }}
+                    onSubmit={createFolder}
                   >
-                    <button
-                      onClick={() =>
-                        startRename(folder.id, "folder", folder.name)
-                      }
-                    >
-                      Rename
-                    </button>
-                    <button
-                      className="danger"
-                      onClick={() => deleteFolder(folder.id)}
-                    >
-                      Delete
-                    </button>
-                  </div>
+                    <IconFolder />
+                    <input
+                      value={newFolderName}
+                      onChange={(e) => setNewFolderName(e.target.value)}
+                      placeholder="Subfolder name"
+                      autoFocus
+                      onBlur={() => {
+                        if (!newFolderName.trim()) {
+                          setCreatingFolder(null);
+                          setNewFolderName("");
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          setCreatingFolder(null);
+                          setNewFolderName("");
+                        }
+                      }}
+                    />
+                  </form>
                 )}
               </div>
             );
           })}
         </div>
+
+        <div className="sidebar-resize-handle" onMouseDown={onResizeStart} />
       </aside>
 
       <main className="dashboard-main">
@@ -966,12 +1311,15 @@ export function Dashboard() {
                     </button>
                     {bulkMoveOpen && (
                       <div className="bulk-move-dropdown">
-                        <button onClick={() => bulkMove(null)}>Home</button>
-                        {folders.map((f) => (
-                          <button key={f.id} onClick={() => bulkMove(f.id)}>
-                            {f.name}
-                          </button>
-                        ))}
+                        <button onClick={() => bulkMove(null)}>
+                          <IconHome />
+                          <span style={{ marginLeft: 6 }}>Home</span>
+                        </button>
+                        <FolderTreeMenu
+                          folders={folderTree}
+                          onSelect={(fid) => bulkMove(fid)}
+                          depth={0}
+                        />
                       </div>
                     )}
                   </div>
@@ -1097,7 +1445,10 @@ export function Dashboard() {
                           onBlur={finishRename}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") finishRename();
-                            if (e.key === "Escape") setRenameTarget(null);
+                            if (e.key === "Escape") {
+                              renameCancelled.current = true;
+                              setRenameTarget(null);
+                            }
                           }}
                           autoFocus
                         />
@@ -1162,7 +1513,7 @@ export function Dashboard() {
                           setMoveMenuDocId={setMoveMenuDocId}
                           moveMenuDocId={moveMenuDocId}
                           moveDocToFolder={moveDocToFolder}
-                          folders={folders}
+                          folderTree={folderTree}
                           setOpenMenuId={setOpenMenuId}
                         />
                       )}
@@ -1197,7 +1548,7 @@ export function Dashboard() {
                   setMoveMenuDocId={setMoveMenuDocId}
                   moveMenuDocId={moveMenuDocId}
                   moveDocToFolder={moveDocToFolder}
-                  folders={folders}
+                  folderTree={folderTree}
                   setOpenMenuId={setOpenMenuId}
                 />
               </div>

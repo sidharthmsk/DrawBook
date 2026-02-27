@@ -22,6 +22,7 @@ export type DocumentType =
 export interface Folder {
   id: string;
   name: string;
+  parentId: string | null;
   createdAt: string;
 }
 
@@ -36,18 +37,27 @@ export interface StoredDocumentInfo {
   modifiedAt: string;
 }
 
+export interface DocumentWithMeta extends StoredDocumentInfo {
+  meta: DocMetadata;
+}
+
 export interface StorageAdapter {
   init(): Promise<void>;
+
   loadFolders(): Promise<Folder[]>;
   saveFolders(folders: Folder[]): Promise<void>;
-  loadMetadata(): Promise<Record<string, DocMetadata>>;
-  saveMetadata(metadata: Record<string, DocMetadata>): Promise<void>;
+
+  loadDocMeta(documentId: string): Promise<DocMetadata>;
+  saveDocMeta(documentId: string, meta: DocMetadata): Promise<void>;
+  deleteDocMeta(documentId: string): Promise<void>;
+
   saveDocument(documentId: string, snapshot: unknown): Promise<void>;
   loadDocument(documentId: string): Promise<unknown | null>;
-  listDocuments(): Promise<StoredDocumentInfo[]>;
+  listDocumentsWithMeta(): Promise<DocumentWithMeta[]>;
   deleteDocument(documentId: string): Promise<boolean>;
   existsDocument(documentId: string): Promise<boolean>;
   renameDocument(oldDocumentId: string, newDocumentId: string): Promise<void>;
+
   saveFile(
     documentId: string,
     buffer: Buffer,
@@ -57,23 +67,101 @@ export interface StorageAdapter {
   deleteFile(documentId: string, extension: string): Promise<boolean>;
 }
 
+// ─── Local Filesystem ───
+
 class LocalStorageAdapter implements StorageAdapter {
   constructor(private dataDir: string) {}
 
   private foldersFilePath() {
     return path.join(this.dataDir, "_folders.json");
   }
-
-  private metadataFilePath() {
-    return path.join(this.dataDir, "_metadata.json");
-  }
-
   private docFilePath(documentId: string) {
     return path.join(this.dataDir, `${documentId}.json`);
+  }
+  private metaDir() {
+    return path.join(this.dataDir, "_docmeta");
+  }
+  private metaFilePath(documentId: string) {
+    return path.join(this.metaDir(), `${documentId}.json`);
+  }
+  private legacyMetadataPath() {
+    return path.join(this.dataDir, "_metadata.json");
+  }
+  private oldMetaFilePath(documentId: string) {
+    return path.join(this.dataDir, `${documentId}.meta.json`);
   }
 
   async init() {
     await fs.mkdir(this.dataDir, { recursive: true });
+    await fs.mkdir(this.metaDir(), { recursive: true });
+    await this.migrateFromLegacy();
+  }
+
+  private async migrateFromLegacy() {
+    // Phase 1: migrate from global _metadata.json
+    try {
+      const raw = await fs.readFile(this.legacyMetadataPath(), "utf-8");
+      const metadata = JSON.parse(raw) as Record<string, DocMetadata>;
+      let migrated = 0;
+      for (const [docId, meta] of Object.entries(metadata)) {
+        try {
+          await fs.access(this.metaFilePath(docId));
+        } catch {
+          await fs.writeFile(
+            this.metaFilePath(docId),
+            JSON.stringify(meta, null, 2),
+            "utf-8",
+          );
+          migrated++;
+        }
+      }
+      if (migrated > 0) {
+        console.log(
+          `[Storage] Migrated ${migrated} entries from _metadata.json to _docmeta/`,
+        );
+      }
+      await fs.rename(
+        this.legacyMetadataPath(),
+        this.legacyMetadataPath() + ".bak",
+      );
+    } catch {
+      // no legacy file
+    }
+
+    // Phase 2: migrate from old *.meta.json in data dir
+    try {
+      const files = await fs.readdir(this.dataDir);
+      let migrated = 0;
+      for (const f of files) {
+        if (!f.endsWith(".meta.json")) continue;
+        const docId = f.replace(/\.meta\.json$/, "");
+        const oldPath = this.oldMetaFilePath(docId);
+        const newPath = this.metaFilePath(docId);
+        try {
+          await fs.access(newPath);
+        } catch {
+          try {
+            const raw = await fs.readFile(oldPath, "utf-8");
+            await fs.writeFile(newPath, raw, "utf-8");
+            migrated++;
+          } catch {
+            // ignore read errors
+          }
+        }
+        try {
+          await fs.unlink(oldPath);
+        } catch {
+          // ignore
+        }
+      }
+      if (migrated > 0) {
+        console.log(
+          `[Storage] Migrated ${migrated} entries from *.meta.json to _docmeta/`,
+        );
+      }
+    } catch {
+      // ignore
+    }
   }
 
   async loadFolders() {
@@ -93,21 +181,29 @@ class LocalStorageAdapter implements StorageAdapter {
     );
   }
 
-  async loadMetadata() {
+  async loadDocMeta(documentId: string): Promise<DocMetadata> {
     try {
-      const content = await fs.readFile(this.metadataFilePath(), "utf-8");
-      return JSON.parse(content) as Record<string, DocMetadata>;
+      const content = await fs.readFile(this.metaFilePath(documentId), "utf-8");
+      return JSON.parse(content) as DocMetadata;
     } catch {
-      return {};
+      return { folderId: null };
     }
   }
 
-  async saveMetadata(metadata: Record<string, DocMetadata>) {
+  async saveDocMeta(documentId: string, meta: DocMetadata) {
     await fs.writeFile(
-      this.metadataFilePath(),
-      JSON.stringify(metadata, null, 2),
+      this.metaFilePath(documentId),
+      JSON.stringify(meta, null, 2),
       "utf-8",
     );
+  }
+
+  async deleteDocMeta(documentId: string) {
+    try {
+      await fs.unlink(this.metaFilePath(documentId));
+    } catch {
+      // ignore
+    }
   }
 
   async saveDocument(documentId: string, snapshot: unknown) {
@@ -127,27 +223,25 @@ class LocalStorageAdapter implements StorageAdapter {
     }
   }
 
-  async listDocuments() {
+  async listDocumentsWithMeta(): Promise<DocumentWithMeta[]> {
     const files = await fs.readdir(this.dataDir);
-    const documentFiles = files.filter(
-      (file) => file.endsWith(".json") && !file.startsWith("_"),
+    const docFiles = files.filter(
+      (f) => f.endsWith(".json") && !f.startsWith("_"),
     );
-    const documents = await Promise.all(
-      documentFiles.map(async (file) => {
-        const filePath = path.join(this.dataDir, file);
-        const stats = await fs.stat(filePath);
-        return {
-          id: file.replace(".json", ""),
-          modifiedAt: stats.mtime.toISOString(),
-        };
+    return Promise.all(
+      docFiles.map(async (file) => {
+        const id = file.replace(".json", "");
+        const stats = await fs.stat(path.join(this.dataDir, file));
+        const meta = await this.loadDocMeta(id);
+        return { id, modifiedAt: stats.mtime.toISOString(), meta };
       }),
     );
-    return documents;
   }
 
   async deleteDocument(documentId: string) {
     try {
       await fs.unlink(this.docFilePath(documentId));
+      await this.deleteDocMeta(documentId);
       return true;
     } catch {
       return false;
@@ -169,6 +263,9 @@ class LocalStorageAdapter implements StorageAdapter {
       this.docFilePath(oldDocumentId),
       this.docFilePath(newDocumentId),
     );
+    const meta = await this.loadDocMeta(oldDocumentId);
+    await this.saveDocMeta(newDocumentId, meta);
+    await this.deleteDocMeta(oldDocumentId);
   }
 
   private rawFilePath(documentId: string, extension: string) {
@@ -193,12 +290,15 @@ class LocalStorageAdapter implements StorageAdapter {
   async deleteFile(documentId: string, extension: string): Promise<boolean> {
     try {
       await fs.unlink(this.rawFilePath(documentId, extension));
+      await this.deleteDocMeta(documentId);
       return true;
     } catch {
       return false;
     }
   }
 }
+
+// ─── MinIO / S3 ───
 
 class MinioStorageAdapter implements StorageAdapter {
   private client: S3Client;
@@ -233,17 +333,23 @@ class MinioStorageAdapter implements StorageAdapter {
   private docsPrefix() {
     return this.keyFor("docs/");
   }
-
   private docKey(documentId: string) {
     return this.keyFor(`docs/${documentId}.json`);
   }
-
+  private docMetaPrefix() {
+    return this.keyFor("docmeta/");
+  }
+  private docMetaKey(documentId: string) {
+    return this.keyFor(`docmeta/${documentId}.json`);
+  }
   private foldersKey() {
     return this.keyFor("meta/folders.json");
   }
-
-  private metadataKey() {
+  private legacyMetadataKey() {
     return this.keyFor("meta/metadata.json");
+  }
+  private fileKey(documentId: string, extension: string) {
+    return this.keyFor(`files/${documentId}.${extension}`);
   }
 
   async init() {
@@ -252,15 +358,121 @@ class MinioStorageAdapter implements StorageAdapter {
     } catch {
       await this.client.send(new CreateBucketCommand({ Bucket: this.bucket }));
     }
+    await this.migrateFromLegacy();
+  }
+
+  private async migrateFromLegacy() {
+    // Phase 1: migrate from global meta/metadata.json
+    const metadata = await this.getJson<Record<string, DocMetadata> | null>(
+      this.legacyMetadataKey(),
+      null,
+    );
+    if (metadata) {
+      let migrated = 0;
+      for (const [docId, meta] of Object.entries(metadata)) {
+        const exists = await this.keyExists(this.docMetaKey(docId));
+        if (!exists) {
+          await this.putJson(this.docMetaKey(docId), meta);
+          migrated++;
+        }
+      }
+      if (migrated > 0) {
+        console.log(
+          `[Storage] Migrated ${migrated} entries from metadata.json to docmeta/`,
+        );
+      }
+      try {
+        await this.client.send(
+          new CopyObjectCommand({
+            Bucket: this.bucket,
+            CopySource: `${this.bucket}/${this.legacyMetadataKey()}`,
+            Key: this.legacyMetadataKey() + ".bak",
+          }),
+        );
+        await this.client.send(
+          new DeleteObjectCommand({
+            Bucket: this.bucket,
+            Key: this.legacyMetadataKey(),
+          }),
+        );
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+
+    // Phase 2: migrate from old docs/*.meta.json to docmeta/*.json
+    await this.migrateOldDocsMeta();
+  }
+
+  private async migrateOldDocsMeta() {
+    const prefix = this.docsPrefix();
+    let continuationToken: string | undefined;
+    let migrated = 0;
+
+    do {
+      const response = await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        }),
+      );
+
+      for (const item of response.Contents || []) {
+        if (!item.Key) continue;
+        const rel = item.Key.replace(prefix, "");
+        if (!rel.endsWith(".meta.json")) continue;
+
+        const docId = rel.replace(/\.meta\.json$/, "");
+        const newKey = this.docMetaKey(docId);
+
+        // Only migrate if the new key doesn't already exist
+        const exists = await this.keyExists(newKey);
+        if (!exists) {
+          const data = await this.getJson<DocMetadata>(item.Key, {
+            folderId: null,
+          });
+          await this.putJson(newKey, data);
+          migrated++;
+        }
+
+        // Delete the old docs/*.meta.json file
+        try {
+          await this.client.send(
+            new DeleteObjectCommand({ Bucket: this.bucket, Key: item.Key }),
+          );
+        } catch {
+          // ignore
+        }
+      }
+
+      continuationToken = response.IsTruncated
+        ? response.NextContinuationToken
+        : undefined;
+    } while (continuationToken);
+
+    if (migrated > 0) {
+      console.log(
+        `[Storage] Migrated ${migrated} entries from docs/*.meta.json to docmeta/`,
+      );
+    }
+  }
+
+  private async keyExists(key: string): Promise<boolean> {
+    try {
+      await this.client.send(
+        new HeadObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private async getJson<T>(key: string, fallback: T): Promise<T> {
     try {
       const response = await this.client.send(
-        new GetObjectCommand({
-          Bucket: this.bucket,
-          Key: key,
-        }),
+        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
       );
       if (!response.Body) return fallback;
       const body = await response.Body.transformToString();
@@ -289,12 +501,27 @@ class MinioStorageAdapter implements StorageAdapter {
     await this.putJson(this.foldersKey(), folders);
   }
 
-  async loadMetadata() {
-    return this.getJson<Record<string, DocMetadata>>(this.metadataKey(), {});
+  async loadDocMeta(documentId: string): Promise<DocMetadata> {
+    return this.getJson<DocMetadata>(this.docMetaKey(documentId), {
+      folderId: null,
+    });
   }
 
-  async saveMetadata(metadata: Record<string, DocMetadata>) {
-    await this.putJson(this.metadataKey(), metadata);
+  async saveDocMeta(documentId: string, meta: DocMetadata) {
+    await this.putJson(this.docMetaKey(documentId), meta);
+  }
+
+  async deleteDocMeta(documentId: string) {
+    try {
+      await this.client.send(
+        new DeleteObjectCommand({
+          Bucket: this.bucket,
+          Key: this.docMetaKey(documentId),
+        }),
+      );
+    } catch {
+      // ignore
+    }
   }
 
   async saveDocument(documentId: string, snapshot: unknown) {
@@ -305,10 +532,10 @@ class MinioStorageAdapter implements StorageAdapter {
     return this.getJson(this.docKey(documentId), null);
   }
 
-  async listDocuments() {
+  async listDocumentsWithMeta(): Promise<DocumentWithMeta[]> {
     const prefix = this.docsPrefix();
     let continuationToken: string | undefined;
-    const out: StoredDocumentInfo[] = [];
+    const contentKeys: { id: string; modifiedAt: string }[] = [];
 
     do {
       const response = await this.client.send(
@@ -322,7 +549,7 @@ class MinioStorageAdapter implements StorageAdapter {
       for (const item of response.Contents || []) {
         if (!item.Key || !item.Key.endsWith(".json")) continue;
         const id = item.Key.replace(prefix, "").replace(/\.json$/, "");
-        out.push({
+        contentKeys.push({
           id,
           modifiedAt: (item.LastModified || new Date()).toISOString(),
         });
@@ -333,7 +560,12 @@ class MinioStorageAdapter implements StorageAdapter {
         : undefined;
     } while (continuationToken);
 
-    return out;
+    const results: DocumentWithMeta[] = [];
+    for (const item of contentKeys) {
+      const meta = await this.loadDocMeta(item.id);
+      results.push({ ...item, meta });
+    }
+    return results;
   }
 
   async deleteDocument(documentId: string) {
@@ -345,25 +577,17 @@ class MinioStorageAdapter implements StorageAdapter {
         Key: this.docKey(documentId),
       }),
     );
+    await this.deleteDocMeta(documentId);
     return true;
   }
 
   async existsDocument(documentId: string) {
-    try {
-      await this.client.send(
-        new HeadObjectCommand({
-          Bucket: this.bucket,
-          Key: this.docKey(documentId),
-        }),
-      );
-      return true;
-    } catch {
-      return false;
-    }
+    return this.keyExists(this.docKey(documentId));
   }
 
   async renameDocument(oldDocumentId: string, newDocumentId: string) {
     if (oldDocumentId === newDocumentId) return;
+    // Copy content
     await this.client.send(
       new CopyObjectCommand({
         Bucket: this.bucket,
@@ -377,10 +601,10 @@ class MinioStorageAdapter implements StorageAdapter {
         Key: this.docKey(oldDocumentId),
       }),
     );
-  }
-
-  private fileKey(documentId: string, extension: string) {
-    return this.keyFor(`files/${documentId}.${extension}`);
+    // Move meta
+    const meta = await this.loadDocMeta(oldDocumentId);
+    await this.saveDocMeta(newDocumentId, meta);
+    await this.deleteDocMeta(oldDocumentId);
   }
 
   async saveFile(documentId: string, buffer: Buffer, extension: string) {
@@ -389,12 +613,16 @@ class MinioStorageAdapter implements StorageAdapter {
         Bucket: this.bucket,
         Key: this.fileKey(documentId, extension),
         Body: buffer,
-        ContentType: extension === 'pdf' ? 'application/pdf' : 'application/octet-stream',
+        ContentType:
+          extension === "pdf" ? "application/pdf" : "application/octet-stream",
       }),
     );
   }
 
-  async loadFile(documentId: string, extension: string): Promise<Buffer | null> {
+  async loadFile(
+    documentId: string,
+    extension: string,
+  ): Promise<Buffer | null> {
     try {
       const response = await this.client.send(
         new GetObjectCommand({
@@ -418,12 +646,15 @@ class MinioStorageAdapter implements StorageAdapter {
           Key: this.fileKey(documentId, extension),
         }),
       );
+      await this.deleteDocMeta(documentId);
       return true;
     } catch {
       return false;
     }
   }
 }
+
+// ─── Factory ───
 
 function getRequiredEnv(name: string) {
   const value = process.env[name];

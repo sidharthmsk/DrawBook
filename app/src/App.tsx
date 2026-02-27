@@ -9,6 +9,14 @@ import { LoginPage } from "./components/LoginPage";
 
 type DocumentType = "tldraw" | "excalidraw" | "drawio" | "markdown" | "pdf";
 
+function typeFromId(id: string): DocumentType {
+  if (id.startsWith("excalidraw-")) return "excalidraw";
+  if (id.startsWith("drawio-")) return "drawio";
+  if (id.startsWith("markdown-")) return "markdown";
+  if (id.startsWith("pdf-")) return "pdf";
+  return "tldraw";
+}
+
 function injectAuthFetch(token: string) {
   if ((window as any).__authFetchPatched) return;
   const originalFetch = window.fetch;
@@ -96,8 +104,8 @@ function AppRouter() {
 
     fetch(`/api/meta/${documentId}`)
       .then((r) => r.json())
-      .then((data) => setResolvedType(data.type || "tldraw"))
-      .catch(() => setResolvedType("tldraw"))
+      .then((data) => setResolvedType(data.type || typeFromId(documentId)))
+      .catch(() => setResolvedType(typeFromId(documentId)))
       .finally(() => setLoading(false));
   }, [documentId, urlType]);
 
@@ -114,7 +122,7 @@ function AppRouter() {
     );
   }
 
-  const docType = resolvedType || "tldraw";
+  const docType = resolvedType || typeFromId(documentId);
 
   switch (docType) {
     case "excalidraw":

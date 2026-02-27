@@ -7,7 +7,18 @@ import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import multer from "multer";
-import { createStorageAdapter, } from "./storage.js";
+import { createStorageAdapter } from "./storage.js";
+function typeFromId(id) {
+    if (id.startsWith("excalidraw-"))
+        return "excalidraw";
+    if (id.startsWith("drawio-"))
+        return "drawio";
+    if (id.startsWith("markdown-"))
+        return "markdown";
+    if (id.startsWith("pdf-"))
+        return "pdf";
+    return "tldraw";
+}
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 // Load env file in both dev and production runs.
@@ -113,12 +124,6 @@ async function loadFolders() {
 async function saveFolders(folders) {
     await storage.saveFolders(folders);
 }
-async function loadMetadata() {
-    return storage.loadMetadata();
-}
-async function saveMetadata(metadata) {
-    await storage.saveMetadata(metadata);
-}
 // ============ FOLDER ENDPOINTS ============
 // List all folders
 app.get("/api/folders", async (_req, res) => {
@@ -134,7 +139,7 @@ app.get("/api/folders", async (_req, res) => {
 // Create a folder
 app.post("/api/folders", async (req, res) => {
     try {
-        const { name } = req.body;
+        const { name, parentId } = req.body;
         if (!name) {
             return res.status(400).json({ error: "Folder name is required" });
         }
@@ -142,6 +147,7 @@ app.post("/api/folders", async (req, res) => {
         const newFolder = {
             id: `folder-${Date.now()}`,
             name: name.trim(),
+            parentId: parentId || null,
             createdAt: new Date().toISOString(),
         };
         folders.push(newFolder);
@@ -177,28 +183,70 @@ app.post("/api/folders/:folderId/rename", async (req, res) => {
         res.status(500).json({ error: "Failed to rename folder" });
     }
 });
-// Delete a folder (moves documents to root)
+// Delete a folder and all descendants (moves documents to root)
 app.delete("/api/folders/:folderId", async (req, res) => {
     try {
         const { folderId } = req.params;
-        // Remove folder
         let folders = await loadFolders();
-        folders = folders.filter((f) => f.id !== folderId);
+        // Collect folder and all descendants
+        const idsToDelete = new Set();
+        const collect = (id) => {
+            idsToDelete.add(id);
+            for (const f of folders) {
+                if (f.parentId === id)
+                    collect(f.id);
+            }
+        };
+        collect(folderId);
+        folders = folders.filter((f) => !idsToDelete.has(f.id));
         await saveFolders(folders);
-        // Move documents from this folder to root
-        const metadata = await loadMetadata();
-        for (const docId of Object.keys(metadata)) {
-            if (metadata[docId].folderId === folderId) {
-                metadata[docId].folderId = null;
+        // Move documents from deleted folders to root
+        const allDocs = await storage.listDocumentsWithMeta();
+        for (const doc of allDocs) {
+            if (doc.meta.folderId && idsToDelete.has(doc.meta.folderId)) {
+                doc.meta.folderId = null;
+                await storage.saveDocMeta(doc.id, doc.meta);
             }
         }
-        await saveMetadata(metadata);
-        console.log(`[Server] Deleted folder: ${folderId}`);
+        console.log(`[Server] Deleted folder tree: ${folderId} (${idsToDelete.size} folders)`);
         res.json({ success: true });
     }
     catch (error) {
         console.error("[Server] Delete folder error:", error);
         res.status(500).json({ error: "Failed to delete folder" });
+    }
+});
+// Move a folder to a new parent
+app.post("/api/folders/:folderId/move", async (req, res) => {
+    try {
+        const { folderId } = req.params;
+        const { parentId } = req.body;
+        const folders = await loadFolders();
+        const folder = folders.find((f) => f.id === folderId);
+        if (!folder) {
+            return res.status(404).json({ error: "Folder not found" });
+        }
+        // Prevent circular references
+        if (parentId) {
+            let cur = parentId;
+            while (cur) {
+                if (cur === folderId) {
+                    return res
+                        .status(400)
+                        .json({ error: "Cannot move folder into itself" });
+                }
+                const parent = folders.find((f) => f.id === cur);
+                cur = parent?.parentId ?? null;
+            }
+        }
+        folder.parentId = parentId || null;
+        await saveFolders(folders);
+        console.log(`[Server] Moved folder ${folderId} to parent ${parentId || "root"}`);
+        res.json({ success: true });
+    }
+    catch (error) {
+        console.error("[Server] Move folder error:", error);
+        res.status(500).json({ error: "Failed to move folder" });
     }
 });
 // ============ DOCUMENT ENDPOINTS ============
@@ -212,14 +260,12 @@ app.post("/api/save/:documentId", async (req, res) => {
         }
         await storage.saveDocument(documentId, snapshot);
         if (folderId !== undefined || type !== undefined) {
-            const metadata = await loadMetadata();
-            const existing = metadata[documentId] || { folderId: null };
+            const existing = await storage.loadDocMeta(documentId);
             if (folderId !== undefined)
                 existing.folderId = folderId;
             if (type !== undefined)
                 existing.type = type;
-            metadata[documentId] = existing;
-            await saveMetadata(metadata);
+            await storage.saveDocMeta(documentId, existing);
         }
         console.log(`[Server] Saved document: ${documentId}`);
         res.json({ success: true });
@@ -235,9 +281,9 @@ app.get("/api/load/:documentId", async (req, res) => {
         const { documentId } = req.params;
         const snapshot = await storage.loadDocument(documentId);
         if (snapshot) {
-            const metadata = await loadMetadata();
+            const meta = await storage.loadDocMeta(documentId);
             console.log(`[Server] Loaded document: ${documentId}`);
-            res.json({ snapshot, metadata: metadata[documentId] || null });
+            res.json({ snapshot, metadata: meta });
         }
         else {
             res.json({ snapshot: null, metadata: null });
@@ -252,18 +298,14 @@ app.get("/api/load/:documentId", async (req, res) => {
 app.get("/api/documents", async (req, res) => {
     try {
         const folderId = req.query.folderId;
-        const metadata = await loadMetadata();
-        const files = (await storage.listDocuments())
-            .map((item) => {
-            const docMeta = metadata[item.id] || { folderId: null };
-            return {
-                id: item.id,
-                name: docMeta.name || item.id,
-                folderId: docMeta.folderId,
-                type: docMeta.type || "tldraw",
-                modifiedAt: item.modifiedAt,
-            };
-        })
+        const files = (await storage.listDocumentsWithMeta())
+            .map((item) => ({
+            id: item.id,
+            name: item.meta.name || item.id,
+            folderId: item.meta.folderId,
+            type: item.meta.type || typeFromId(item.id),
+            modifiedAt: item.modifiedAt,
+        }))
             .filter((doc) => {
             // Filter by folder
             if (folderId === undefined)
@@ -285,12 +327,9 @@ app.post("/api/documents/:documentId/move", async (req, res) => {
     try {
         const { documentId } = req.params;
         const { folderId } = req.body;
-        const metadata = await loadMetadata();
-        metadata[documentId] = {
-            ...metadata[documentId],
-            folderId: folderId || null,
-        };
-        await saveMetadata(metadata);
+        const meta = await storage.loadDocMeta(documentId);
+        meta.folderId = folderId || null;
+        await storage.saveDocMeta(documentId, meta);
         console.log(`[Server] Moved document ${documentId} to folder ${folderId || "root"}`);
         res.json({ success: true });
     }
@@ -303,18 +342,17 @@ app.post("/api/documents/:documentId/move", async (req, res) => {
 app.delete("/api/delete/:documentId", async (req, res) => {
     try {
         const { documentId } = req.params;
-        const metadata = await loadMetadata();
-        const docMeta = metadata[documentId];
+        const docMeta = await storage.loadDocMeta(documentId);
+        const docType = docMeta.type || typeFromId(documentId);
         let deleted = false;
-        if (docMeta?.type === "pdf") {
+        if (docType === "pdf") {
             deleted = await storage.deleteFile(documentId, "pdf");
         }
         else {
             deleted = await storage.deleteDocument(documentId);
         }
         if (deleted) {
-            delete metadata[documentId];
-            await saveMetadata(metadata);
+            await storage.deleteDocMeta(documentId);
             console.log(`[Server] Deleted document: ${documentId}`);
             res.json({ success: true });
         }
@@ -348,23 +386,14 @@ app.post("/api/rename/:documentId", async (req, res) => {
                 .status(400)
                 .json({ error: "A document with that name already exists" });
         }
-        // Rename file
+        // Rename file (renameDocument also moves the .meta.json)
         if (documentId !== newDocumentId) {
             await storage.renameDocument(documentId, newDocumentId);
         }
-        // Update metadata
-        const metadata = await loadMetadata();
-        if (metadata[documentId]) {
-            metadata[newDocumentId] = {
-                ...metadata[documentId],
-                name: newName.trim(),
-            };
-            delete metadata[documentId];
-        }
-        else {
-            metadata[newDocumentId] = { folderId: null, name: newName.trim() };
-        }
-        await saveMetadata(metadata);
+        // Update the name in metadata
+        const meta = await storage.loadDocMeta(newDocumentId);
+        meta.name = newName.trim();
+        await storage.saveDocMeta(newDocumentId, meta);
         console.log(`[Server] Renamed document: ${documentId} -> ${newDocumentId}`);
         res.json({ success: true, newDocumentId });
     }
@@ -380,13 +409,11 @@ app.post("/api/bulk/move", async (req, res) => {
         if (!Array.isArray(documentIds)) {
             return res.status(400).json({ error: "documentIds array is required" });
         }
-        const metadata = await loadMetadata();
         for (const docId of documentIds) {
-            if (metadata[docId]) {
-                metadata[docId].folderId = folderId || null;
-            }
+            const meta = await storage.loadDocMeta(docId);
+            meta.folderId = folderId || null;
+            await storage.saveDocMeta(docId, meta);
         }
-        await saveMetadata(metadata);
         console.log(`[Server] Bulk moved ${documentIds.length} docs to ${folderId || "root"}`);
         res.json({ success: true });
     }
@@ -401,18 +428,17 @@ app.post("/api/bulk/delete", async (req, res) => {
         if (!Array.isArray(documentIds)) {
             return res.status(400).json({ error: "documentIds array is required" });
         }
-        const metadata = await loadMetadata();
         for (const docId of documentIds) {
-            const docMeta = metadata[docId];
-            if (docMeta?.type === "pdf") {
+            const docMeta = await storage.loadDocMeta(docId);
+            const docType = docMeta.type || typeFromId(docId);
+            if (docType === "pdf") {
                 await storage.deleteFile(docId, "pdf");
             }
             else {
                 await storage.deleteDocument(docId);
             }
-            delete metadata[docId];
+            await storage.deleteDocMeta(docId);
         }
-        await saveMetadata(metadata);
         console.log(`[Server] Bulk deleted ${documentIds.length} docs`);
         res.json({ success: true });
     }
@@ -434,13 +460,11 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
         const docId = `pdf-${Date.now()}`;
         const extension = "pdf";
         await storage.saveFile(docId, file.buffer, extension);
-        const metadata = await loadMetadata();
-        metadata[docId] = {
+        await storage.saveDocMeta(docId, {
             folderId,
             name: originalName,
             type: "pdf",
-        };
-        await saveMetadata(metadata);
+        });
         console.log(`[Server] Uploaded file: ${docId} (${originalName})`);
         res.json({ success: true, documentId: docId, name: originalName });
     }
@@ -453,10 +477,7 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
 app.get("/api/file/:documentId", async (req, res) => {
     try {
         const { documentId } = req.params;
-        const metadata = await loadMetadata();
-        const docMeta = metadata[documentId];
-        const extension = docMeta?.type === "pdf" ? "pdf" : "pdf";
-        const buffer = await storage.loadFile(documentId, extension);
+        const buffer = await storage.loadFile(documentId, "pdf");
         if (!buffer) {
             return res.status(404).json({ error: "File not found" });
         }
@@ -473,10 +494,9 @@ app.get("/api/file/:documentId", async (req, res) => {
 app.get("/api/meta/:documentId", async (req, res) => {
     try {
         const { documentId } = req.params;
-        const metadata = await loadMetadata();
-        const docMeta = metadata[documentId] || { folderId: null, type: "tldraw" };
+        const docMeta = await storage.loadDocMeta(documentId);
         res.json({
-            type: docMeta.type || "tldraw",
+            type: docMeta.type || typeFromId(documentId),
             name: docMeta.name,
             folderId: docMeta.folderId,
         });
