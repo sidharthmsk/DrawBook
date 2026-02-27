@@ -9,6 +9,7 @@ interface DrawioEditorProps {
 
 const DRAWIO_URL =
   "https://embed.diagrams.net/?embed=1&proto=json&spin=1&dark=1&ui=dark";
+const DRAWIO_ORIGIN = "https://embed.diagrams.net";
 
 export function DrawioEditor({ documentId }: DrawioEditorProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -64,6 +65,7 @@ export function DrawioEditor({ documentId }: DrawioEditorProps) {
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== DRAWIO_ORIGIN) return;
       if (!event.data || typeof event.data !== "string") return;
 
       let msg: any;
@@ -84,7 +86,7 @@ export function DrawioEditor({ documentId }: DrawioEditorProps) {
               xml: xmlRef.current || "",
               autosave: 1,
             }),
-            "*",
+            DRAWIO_ORIGIN,
           );
         }
       }

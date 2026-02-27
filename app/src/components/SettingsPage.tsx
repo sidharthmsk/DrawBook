@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useConfirm } from "./ConfirmDialog";
 
 interface SettingsData {
   appPassword: string;
@@ -25,6 +26,7 @@ export function SettingsPage({
   onClose: () => void;
   isElectron?: boolean;
 }) {
+  const confirm = useConfirm();
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -260,7 +262,8 @@ export function SettingsPage({
   }, []);
 
   const deleteTemplate = async (templateId: string) => {
-    if (!window.confirm("Delete this template?")) return;
+    if (!(await confirm({ message: "Delete this template?", danger: true })))
+      return;
     try {
       const res = await fetch(`/api/templates/${templateId}`, {
         method: "DELETE",

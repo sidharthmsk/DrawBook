@@ -1,4 +1,10 @@
-import { useState, useEffect, useRef, type ReactNode } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  type ReactNode,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { EditableTitle } from "./EditableTitle";
 import { AiChatPanel } from "./ai/AiChatPanel";
 import type { EditorAdapter } from "./ai/EditorAdapter";
@@ -30,15 +36,36 @@ function MobileOverflowMenu({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  const handleMenuClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+
+    // Keep the menu open for nested interactive controls (e.g. select dropdowns).
+    if (
+      target.closest(
+        "select, option, input, textarea, [role='combobox'], .export-format-select, .editor-task-popover-wrapper",
+      )
+    ) {
+      return;
+    }
+
+    if (target.closest("button, a")) {
+      setOpen(false);
+    }
+  };
+
   useEffect(() => {
     if (!open) return;
-    const handler = (e: MouseEvent) => {
+    const handler = (e: MouseEvent | TouchEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     };
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener("touchstart", handler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("touchstart", handler);
+    };
   }, [open]);
 
   return (
@@ -55,7 +82,7 @@ function MobileOverflowMenu({ children }: { children: ReactNode }) {
         </svg>
       </button>
       {open && (
-        <div className="mobile-overflow__menu" onClick={() => setOpen(false)}>
+        <div className="mobile-overflow__menu" onClick={handleMenuClick}>
           {children}
         </div>
       )}
@@ -273,6 +300,8 @@ export function EditorShell({
   };
 
   const deleteDocTask = async (taskId: string) => {
+    if (!(await confirm({ message: "Delete this task?", danger: true })))
+      return;
     try {
       await fetch(`/api/tasks/${taskId}`, { method: "DELETE" });
       setDocTasks((prev) => prev.filter((t) => t.id !== taskId));

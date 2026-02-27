@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { useConfirm } from "./ConfirmDialog";
 import { MindMapView } from "./MindMapView";
 import { LinkGraph } from "./LinkGraph";
@@ -87,6 +88,67 @@ function flattenTree(nodes: FolderNode[]): FolderNode[] {
     out.push(...flattenTree(n.children));
   }
   return out;
+}
+
+function collectDescendantIds(
+  nodes: FolderNode[],
+  targetId: string,
+): Set<string> {
+  const ids = new Set<string>();
+  const collect = (children: FolderNode[]) => {
+    for (const n of children) {
+      ids.add(n.folder.id);
+      collect(n.children);
+    }
+  };
+  const find = (tree: FolderNode[]): FolderNode | undefined => {
+    for (const n of tree) {
+      if (n.folder.id === targetId) return n;
+      const found = find(n.children);
+      if (found) return found;
+    }
+  };
+  const node = find(nodes);
+  if (node) collect(node.children);
+  return ids;
+}
+
+function FilteredFolderTreeMenu({
+  folders,
+  excludeIds,
+  onSelect,
+  depth,
+}: {
+  folders: FolderNode[];
+  excludeIds: Set<string>;
+  onSelect: (folderId: string | null) => void;
+  depth: number;
+}) {
+  return (
+    <>
+      {folders
+        .filter((node) => !excludeIds.has(node.folder.id))
+        .map((node) => (
+          <div key={node.folder.id}>
+            <button
+              style={{ paddingLeft: 10 + depth * 14 }}
+              onClick={() => onSelect(node.folder.id)}
+            >
+              <IconFolder />
+              <span style={{ marginLeft: 6 }}>{node.folder.name}</span>
+            </button>
+            {node.children.length > 0 && (
+              <FilteredFolderTreeMenu
+                folders={node.children}
+                excludeIds={excludeIds}
+                onSelect={onSelect}
+                depth={depth + 1}
+              />
+            )}
+          </div>
+        ))}
+    </>
+  );
 }
 
 const IconTreeChevron = ({ expanded }: { expanded: boolean }) => (
@@ -672,14 +734,47 @@ export function Dashboard({ config }: { config: AppConfig }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [moveMenuDocId, setMoveMenuDocId] = useState<string | null>(null);
+  const [moveFolderMenuId, setMoveFolderMenuId] = useState<string | null>(null);
   const [newDropdownOpen, setNewDropdownOpen] = useState(false);
+  const [newDropdownPos, setNewDropdownPos] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
+  const [isTopbarCompact, setIsTopbarCompact] = useState(
+    () => window.matchMedia("(max-width: 900px)").matches,
+  );
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
   const lastSelectedIndex = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const newDropdownButtonRef = useRef<HTMLButtonElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
   const touchStartX = useRef<number | null>(null);
+
+  const updateNewDropdownPos = useCallback(() => {
+    const button = newDropdownButtonRef.current;
+    if (!button) return;
+    const rect = button.getBoundingClientRect();
+    const menuWidth = 220;
+    const horizontalPadding = 12;
+    const left = Math.min(
+      Math.max(horizontalPadding, rect.right - menuWidth),
+      window.innerWidth - menuWidth - horizontalPadding,
+    );
+    setNewDropdownPos({
+      top: rect.bottom + 6,
+      left,
+    });
+  }, []);
+
+  useEffect(() => {
+    const mql = window.matchMedia("(max-width: 900px)");
+    const onChange = (event: MediaQueryListEvent) =>
+      setIsTopbarCompact(event.matches);
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
 
   const handleSidebarTouchStart = useCallback((e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
@@ -872,6 +967,9 @@ export function Dashboard({ config }: { config: AppConfig }) {
       if ((e.metaKey || e.ctrlKey) && e.key === "n") {
         e.preventDefault();
         setNewDropdownOpen(true);
+        if (!isTopbarCompact) {
+          requestAnimationFrame(updateNewDropdownPos);
+        }
       }
       const tag = (e.target as HTMLElement).tagName;
       if (
@@ -886,31 +984,71 @@ export function Dashboard({ config }: { config: AppConfig }) {
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, []);
+  }, [isTopbarCompact, updateNewDropdownPos]);
 
   useEffect(() => {
     if (newDropdownOpen) loadTemplates();
   }, [newDropdownOpen]);
 
   useEffect(() => {
-    if (!openMenuId && !newDropdownOpen && !bulkMoveOpen) return;
-    const closeMenus = () => {
+    if (!newDropdownOpen || isTopbarCompact) return;
+    updateNewDropdownPos();
+    window.addEventListener("resize", updateNewDropdownPos);
+    window.addEventListener("scroll", updateNewDropdownPos, true);
+    return () => {
+      window.removeEventListener("resize", updateNewDropdownPos);
+      window.removeEventListener("scroll", updateNewDropdownPos, true);
+    };
+  }, [newDropdownOpen, isTopbarCompact, updateNewDropdownPos]);
+
+  useEffect(() => {
+    if (!newDropdownOpen) return;
+    const closeOnOutside = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (newDropdownButtonRef.current?.contains(target)) return;
+      if (target.closest(".new-dropdown-menu")) return;
+      setNewDropdownOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setNewDropdownOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutside);
+    document.addEventListener("touchstart", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutside);
+      document.removeEventListener("touchstart", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [newDropdownOpen]);
+
+  useEffect(() => {
+    if (!openMenuId && !bulkMoveOpen) return;
+    const closeMenus = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.closest(
+          ".dropdown-menu, .dropdown-popout, .bulk-move-dropdown, .context-menu-portal, .icon-menu-btn, .sidebar-folder__menu-btn, .bulk-bar__btn",
+        )
+      )
+        return;
       setOpenMenuId(null);
       setMenuPos(null);
       setMoveMenuDocId(null);
-      setNewDropdownOpen(false);
+      setMoveFolderMenuId(null);
       setBulkMoveOpen(false);
     };
     const raf = requestAnimationFrame(() => {
-      document.addEventListener("click", closeMenus);
-      document.addEventListener("touchend", closeMenus);
+      document.addEventListener("mousedown", closeMenus);
+      document.addEventListener("touchstart", closeMenus);
     });
     return () => {
       cancelAnimationFrame(raf);
-      document.removeEventListener("click", closeMenus);
-      document.removeEventListener("touchend", closeMenus);
+      document.removeEventListener("mousedown", closeMenus);
+      document.removeEventListener("touchstart", closeMenus);
     };
-  }, [openMenuId, newDropdownOpen, bulkMoveOpen]);
+  }, [openMenuId, bulkMoveOpen]);
 
   const createNewDocument = (type: DocumentType) => {
     const prefix = type === "tldraw" ? "drawing" : type;
@@ -1262,6 +1400,8 @@ export function Dashboard({ config }: { config: AppConfig }) {
   };
 
   const deleteFleetingNote = async (noteId: string) => {
+    if (!(await confirm({ message: "Delete this note?", danger: true })))
+      return;
     try {
       await fetch(`/api/fleeting/${noteId}`, { method: "DELETE" });
       setFleetingNotes((prev) => prev.filter((n) => n.id !== noteId));
@@ -1319,6 +1459,8 @@ export function Dashboard({ config }: { config: AppConfig }) {
   };
 
   const deleteTask = async (taskId: string) => {
+    if (!(await confirm({ message: "Delete this task?", danger: true })))
+      return;
     try {
       await fetch(`/api/tasks/${taskId}`, { method: "DELETE" });
       setTasks((prev) => prev.filter((t) => t.id !== taskId));
@@ -1462,6 +1604,14 @@ export function Dashboard({ config }: { config: AppConfig }) {
   };
 
   const duplicateDoc = async (docId: string) => {
+    if (
+      !(await confirm({
+        message: "Duplicate this document?",
+        confirmLabel: "Duplicate",
+        danger: false,
+      }))
+    )
+      return;
     try {
       const res = await fetch(`/api/duplicate/${docId}`, { method: "POST" });
       if (!res.ok) throw new Error("Duplicate failed");
@@ -1882,6 +2032,75 @@ export function Dashboard({ config }: { config: AppConfig }) {
                       >
                         New subfolder
                       </button>
+                      <div
+                        className="dropdown-menu__hover-parent"
+                        onMouseLeave={() => {
+                          if (!("ontouchstart" in window))
+                            setMoveFolderMenuId(null);
+                        }}
+                      >
+                        <button
+                          className="dropdown-menu__has-sub"
+                          onClick={() =>
+                            setMoveFolderMenuId((cur) =>
+                              cur === folder.id ? null : folder.id,
+                            )
+                          }
+                          onMouseEnter={() => {
+                            if (!("ontouchstart" in window))
+                              setMoveFolderMenuId(folder.id);
+                          }}
+                        >
+                          Move to...
+                          <svg
+                            width="8"
+                            height="8"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            style={{ marginLeft: "auto" }}
+                          >
+                            <path d="M6 4l4 4-4 4" />
+                          </svg>
+                        </button>
+                        {moveFolderMenuId === folder.id && (
+                          <div
+                            className="dropdown-popout"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              onClick={() => {
+                                moveFolderToParent(folder.id, null);
+                                setOpenMenuId(null);
+                                setMoveFolderMenuId(null);
+                              }}
+                            >
+                              <IconHome />
+                              Home (root)
+                            </button>
+                            <FilteredFolderTreeMenu
+                              folders={folderTree}
+                              excludeIds={(() => {
+                                const ids = collectDescendantIds(
+                                  folderTree,
+                                  folder.id,
+                                );
+                                ids.add(folder.id);
+                                return ids;
+                              })()}
+                              onSelect={(fid) => {
+                                if (fid) moveFolderToParent(folder.id, fid);
+                                setOpenMenuId(null);
+                                setMoveFolderMenuId(null);
+                              }}
+                              depth={0}
+                            />
+                          </div>
+                        )}
+                      </div>
                       <button
                         className="danger"
                         onClick={() => deleteFolder(folder.id)}
@@ -2180,74 +2399,120 @@ export function Dashboard({ config }: { config: AppConfig }) {
 
             <div className="new-dropdown-wrapper">
               <button
+                ref={newDropdownButtonRef}
                 className="primary-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setNewDropdownOpen((v) => !v);
-                }}
-                onTouchEnd={(e) => e.stopPropagation()}
+                onClick={() =>
+                  setNewDropdownOpen((v) => {
+                    const next = !v;
+                    if (next && !isTopbarCompact) {
+                      requestAnimationFrame(updateNewDropdownPos);
+                    }
+                    return next;
+                  })
+                }
               >
                 <IconPlus />
                 New
                 <IconChevron />
               </button>
-              {newDropdownOpen && (
-                <div
-                  className="new-dropdown-menu"
-                  onClick={(e) => e.stopPropagation()}
-                  onTouchEnd={(e) => e.stopPropagation()}
-                >
-                  {(
-                    [
-                      "markdown",
-                      "kanban",
-                      "excalidraw",
-                      "code",
-                      "grid",
-                      "spreadsheet",
-                      "tldraw",
-                    ] as DocumentType[]
-                  )
-                    .filter((type) => type !== "tldraw" || config.enableTldraw)
-                    .map((type) => {
-                      const conf = TYPE_CONFIG[type];
-                      const Icon = TYPE_ICONS[type];
-                      return (
-                        <button
-                          key={type}
-                          onClick={() => createNewDocument(type)}
-                        >
-                          <span style={{ color: conf.color, display: "flex" }}>
-                            <Icon />
-                          </span>
-                          <span>{conf.label}</span>
-                        </button>
-                      );
-                    })}
-                  {templates.length > 0 && (
+              {newDropdownOpen &&
+                (() => {
+                  const dropdownContent = (
                     <>
-                      <div className="new-dropdown-divider" />
-                      <div className="new-dropdown-section-label">
-                        From Template
+                      {!isTopbarCompact && (
+                        <div
+                          className="new-dropdown-backdrop"
+                          onMouseDown={() => setNewDropdownOpen(false)}
+                          onTouchStart={() => setNewDropdownOpen(false)}
+                        />
+                      )}
+                      <div
+                        className="new-dropdown-menu"
+                        style={
+                          isTopbarCompact
+                            ? {
+                                position: "fixed",
+                                top: "auto",
+                                bottom:
+                                  "calc(68px + env(safe-area-inset-bottom, 0px))",
+                                left: 16,
+                                right: "auto",
+                                width: "min(280px, calc(100vw - 32px))",
+                                minWidth: 220,
+                                maxHeight: "50vh",
+                                overflowY: "auto",
+                                zIndex: 10001,
+                              }
+                            : newDropdownPos
+                              ? {
+                                  position: "fixed",
+                                  top: newDropdownPos.top,
+                                  left: newDropdownPos.left,
+                                  right: "auto",
+                                  minWidth: 220,
+                                  zIndex: 10001,
+                                }
+                              : undefined
+                        }
+                      >
+                        {(
+                          [
+                            "markdown",
+                            "kanban",
+                            "excalidraw",
+                            "code",
+                            "grid",
+                            "spreadsheet",
+                            "tldraw",
+                          ] as DocumentType[]
+                        )
+                          .filter(
+                            (type) => type !== "tldraw" || config.enableTldraw,
+                          )
+                          .map((type) => {
+                            const conf = TYPE_CONFIG[type];
+                            const Icon = TYPE_ICONS[type];
+                            return (
+                              <button
+                                key={type}
+                                onClick={() => createNewDocument(type)}
+                              >
+                                <span
+                                  style={{ color: conf.color, display: "flex" }}
+                                >
+                                  <Icon />
+                                </span>
+                                <span>{conf.label}</span>
+                              </button>
+                            );
+                          })}
+                        {templates.length > 0 && (
+                          <>
+                            <div className="new-dropdown-divider" />
+                            <div className="new-dropdown-section-label">
+                              From Template
+                            </div>
+                            {templates.map((t) => (
+                              <button
+                                key={t.id}
+                                onClick={() => {
+                                  useTemplate(t.id);
+                                  setNewDropdownOpen(false);
+                                }}
+                              >
+                                <span style={{ display: "flex", opacity: 0.6 }}>
+                                  <IconTemplate />
+                                </span>
+                                <span>{t.name}</span>
+                              </button>
+                            ))}
+                          </>
+                        )}
                       </div>
-                      {templates.map((t) => (
-                        <button
-                          key={t.id}
-                          onClick={() => {
-                            useTemplate(t.id);
-                            setNewDropdownOpen(false);
-                          }}
-                        >
-                          <span style={{ display: "flex", opacity: 0.6 }}>
-                            <IconTemplate />
-                          </span>
-                          <span>{t.name}</span>
-                        </button>
-                      ))}
                     </>
-                  )}
-                </div>
-              )}
+                  );
+                  return createPortal(dropdownContent, document.body);
+                })()}
             </div>
           </div>
         </header>
@@ -3234,6 +3499,16 @@ export function Dashboard({ config }: { config: AppConfig }) {
               </div>
             );
           })()}
+
+        <button
+          className="mobile-new-fab"
+          onClick={() => setNewDropdownOpen(true)}
+          aria-label="Create new document"
+          title="New"
+        >
+          <IconPlus />
+          <span>New</span>
+        </button>
       </main>
 
       {shortcutsOpen && (
@@ -3552,7 +3827,11 @@ export function Dashboard({ config }: { config: AppConfig }) {
                       className="fleeting-panel__action-btn"
                       title="Open linked document"
                       onClick={() => {
-                        window.location.href = `/?doc=${note.documentId}&type=markdown`;
+                        const linkedDoc = allDocs.find(
+                          (d) => d.id === note.documentId,
+                        );
+                        const docType = linkedDoc?.type || "markdown";
+                        window.location.href = `/?doc=${note.documentId}&type=${docType}`;
                       }}
                     >
                       <svg

@@ -19,21 +19,28 @@ export function UrlCell({ value, onChange }: UrlCellProps) {
   }, [editing, value]);
 
   if (!editing) {
+    const safeHref = value && /^https?:\/\//i.test(value) ? value : undefined;
     return (
       <div
         className="grid-cell__display grid-cell__display--url"
         onDoubleClick={() => setEditing(true)}
       >
         {value ? (
-          <a
-            className="grid-cell__url-link"
-            href={value}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {value}
-          </a>
+          safeHref ? (
+            <a
+              className="grid-cell__url-link"
+              href={safeHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {value}
+            </a>
+          ) : (
+            <span className="grid-cell__url-link grid-cell__url-link--invalid">
+              {value}
+            </span>
+          )
         ) : (
           <span className="grid-cell__placeholder">Empty</span>
         )}

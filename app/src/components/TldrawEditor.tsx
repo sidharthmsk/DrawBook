@@ -123,8 +123,7 @@ export function TldrawEditor({
     if (!editor) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const token = localStorage.getItem("drawbook_token") || "";
-    const wsUrl = `${protocol}//${window.location.host}/ws?doc=${documentId}${token ? `&token=${token}` : ""}`;
+    const wsUrl = `${protocol}//${window.location.host}/ws?doc=${documentId}`;
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
