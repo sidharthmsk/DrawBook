@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 
-interface Document {
+interface DocumentItem {
   id: string
   name: string
   folderId: string | null
@@ -13,711 +13,502 @@ interface Folder {
   createdAt: string
 }
 
+type RenameTarget = { id: string; kind: 'doc' | 'folder' } | null
+
+/* ─── Inline SVG Icons ─── */
+const IconHome = () => (
+  <svg className="folder-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2.5 6.5L8 2l5.5 4.5V13a1 1 0 01-1 1h-9a1 1 0 01-1-1V6.5z" />
+    <path d="M6 14V9h4v5" />
+  </svg>
+)
+
+const IconFolder = () => (
+  <svg className="folder-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2 4.5A1.5 1.5 0 013.5 3h2.382a1 1 0 01.894.553L7.5 5h5A1.5 1.5 0 0114 6.5v5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5v-7z" />
+  </svg>
+)
+
+const IconSearch = () => (
+  <svg className="search-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="7" cy="7" r="4.5" />
+    <path d="M10.5 10.5L14 14" />
+  </svg>
+)
+
+const IconPlus = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+    <path d="M8 3v10M3 8h10" />
+  </svg>
+)
+
+const IconDots = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+    <circle cx="8" cy="3.5" r="1.25" />
+    <circle cx="8" cy="8" r="1.25" />
+    <circle cx="8" cy="12.5" r="1.25" />
+  </svg>
+)
+
+const IconMenu = () => (
+  <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+    <path d="M2 4h12M2 8h12M2 12h12" />
+  </svg>
+)
+
 export function Dashboard() {
-  const [docs, setDocs] = useState<Document[]>([])
+  const [allDocs, setAllDocs] = useState<DocumentItem[]>([])
   const [folders, setFolders] = useState<Folder[]>([])
   const [currentFolder, setCurrentFolder] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [menuOpen, setMenuOpen] = useState<string | null>(null)
-  const [renaming, setRenaming] = useState<string | null>(null)
-  const [renameValue, setRenameValue] = useState('')
-  const [showNewFolderInput, setShowNewFolderInput] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [newFolderName, setNewFolderName] = useState('')
-  const [movingDoc, setMovingDoc] = useState<string | null>(null)
+  const [creatingFolder, setCreatingFolder] = useState(false)
+  const [renameTarget, setRenameTarget] = useState<RenameTarget>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [searchTerm, setSearchTerm] = useState('')
+  const [draggingDocId, setDraggingDocId] = useState<string | null>(null)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null)
+  const [moveMenuDocId, setMoveMenuDocId] = useState<string | null>(null)
+
+  useEffect(() => {
+    document.body.classList.add('dashboard-mode')
+    document.documentElement.classList.add('dashboard-mode')
+    return () => {
+      document.body.classList.remove('dashboard-mode')
+      document.documentElement.classList.remove('dashboard-mode')
+    }
+  }, [])
 
   const loadData = async () => {
     setLoading(true)
+    setError(null)
+
     try {
-      const [foldersRes, docsRes] = await Promise.all([
-        fetch('/api/folders'),
-        fetch(`/api/documents${currentFolder ? `?folderId=${currentFolder}` : '?folderId=root'}`)
-      ])
+      const [foldersRes, docsRes] = await Promise.all([fetch('/api/folders'), fetch('/api/documents')])
+
+      if (!foldersRes.ok || !docsRes.ok) {
+        throw new Error('Could not load dashboard data')
+      }
+
       const foldersData = await foldersRes.json()
       const docsData = await docsRes.json()
       setFolders(foldersData.folders || [])
-      setDocs(docsData.documents || [])
+      setAllDocs(docsData.documents || [])
     } catch (e) {
       console.error('Failed to load data:', e)
+      setError('Could not load drawings right now. Please refresh.')
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   useEffect(() => {
     loadData()
-  }, [currentFolder])
+  }, [])
 
-  // Close menu when clicking outside
   useEffect(() => {
-    const handleClick = () => {
-      setMenuOpen(null)
-      setMovingDoc(null)
+    if (!openMenuId) return
+    const closeMenus = () => {
+      setOpenMenuId(null)
+      setMoveMenuDocId(null)
     }
-    if (menuOpen || movingDoc) {
-      document.addEventListener('click', handleClick)
-      return () => document.removeEventListener('click', handleClick)
-    }
-  }, [menuOpen, movingDoc])
+    document.addEventListener('click', closeMenus)
+    return () => document.removeEventListener('click', closeMenus)
+  }, [openMenuId])
 
-  const createNew = () => {
+  const createNewDrawing = () => {
     const docId = `drawing-${Date.now()}`
-    // Save with current folder
-    if (currentFolder) {
-      fetch(`/api/documents/${docId}/move`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderId: currentFolder })
-      })
-    }
-    window.location.href = `/?doc=${docId}${currentFolder ? `&folder=${currentFolder}` : ''}`
+    const folderParam = currentFolder ? `&folder=${encodeURIComponent(currentFolder)}` : ''
+    window.location.href = `/?doc=${docId}${folderParam}`
   }
 
   const openDoc = (id: string) => {
-    if (renaming === id) return
     window.location.href = `/?doc=${id}`
   }
 
-  const openFolder = (folderId: string) => {
-    setCurrentFolder(folderId)
-  }
+  const currentFolderName = currentFolder ? folders.find((f) => f.id === currentFolder)?.name || 'Folder' : 'Home'
 
-  const goToRoot = () => {
-    setCurrentFolder(null)
-  }
-
-  const createFolder = async () => {
-    if (!newFolderName.trim()) {
-      setShowNewFolderInput(false)
-      return
+  const folderDocCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    let rootCount = 0
+    for (const doc of allDocs) {
+      if (doc.folderId) {
+        counts.set(doc.folderId, (counts.get(doc.folderId) || 0) + 1)
+      } else {
+        rootCount += 1
+      }
     }
-    
+    return { counts, rootCount }
+  }, [allDocs])
+
+  const visibleDocs = useMemo(() => {
+    const byFolder = allDocs.filter((doc) => doc.folderId === currentFolder)
+    if (!searchTerm.trim()) return byFolder
+    const normalized = searchTerm.trim().toLowerCase()
+    return byFolder.filter((doc) => doc.name.toLowerCase().includes(normalized) || doc.id.toLowerCase().includes(normalized))
+  }, [allDocs, currentFolder, searchTerm])
+
+  const createFolder = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!newFolderName.trim()) return
+
     try {
-      await fetch('/api/folders', {
+      const res = await fetch('/api/folders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newFolderName.trim() })
+        body: JSON.stringify({ name: newFolderName.trim() }),
       })
+      if (!res.ok) {
+        throw new Error('Create folder failed')
+      }
       setNewFolderName('')
-      setShowNewFolderInput(false)
-      loadData()
-    } catch (e) {
-      console.error('Failed to create folder:', e)
-    }
-  }
-
-  const deleteDoc = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (!confirm('Delete this drawing?')) return
-    
-    try {
-      await fetch(`/api/delete/${id}`, { method: 'DELETE' })
-      setDocs(docs.filter(d => d.id !== id))
+      setCreatingFolder(false)
+      await loadData()
     } catch (err) {
-      console.error('Failed to delete:', err)
+      console.error('Failed to create folder:', err)
     }
-    setMenuOpen(null)
   }
 
-  const deleteFolder = async (folderId: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (!confirm('Delete this folder? Drawings inside will be moved to root.')) return
-    
+  const deleteFolder = async (folderId: string) => {
+    if (!confirm('Delete this folder? Drawings inside it will move to Home.')) return
     try {
-      await fetch(`/api/folders/${folderId}`, { method: 'DELETE' })
-      loadData()
+      const res = await fetch(`/api/folders/${folderId}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Delete folder failed')
+      if (currentFolder === folderId) {
+        setCurrentFolder(null)
+      }
+      await loadData()
     } catch (err) {
       console.error('Failed to delete folder:', err)
     }
-    setMenuOpen(null)
   }
 
-  const startRename = (item: Document | Folder, e: React.MouseEvent) => {
-    e.stopPropagation()
-    setRenaming(item.id)
-    setRenameValue(item.name || item.id)
-    setMenuOpen(null)
-  }
-
-  const finishRename = async (id: string, isFolder: boolean) => {
-    if (!renameValue.trim()) {
-      setRenaming(null)
-      return
-    }
-    
+  const deleteDoc = async (docId: string) => {
+    if (!confirm('Delete this drawing?')) return
     try {
-      if (isFolder) {
-        await fetch(`/api/folders/${id}/rename`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: renameValue.trim() })
-        })
-      } else {
-        await fetch(`/api/rename/${id}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ newName: renameValue.trim() })
-        })
-      }
-      loadData()
+      const res = await fetch(`/api/delete/${docId}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Delete drawing failed')
+      setAllDocs((prev) => prev.filter((doc) => doc.id !== docId))
     } catch (err) {
-      console.error('Failed to rename:', err)
+      console.error('Failed to delete drawing:', err)
     }
-    setRenaming(null)
   }
 
   const moveDocToFolder = async (docId: string, folderId: string | null) => {
     try {
-      await fetch(`/api/documents/${docId}/move`, {
+      const res = await fetch(`/api/documents/${docId}/move`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderId })
+        body: JSON.stringify({ folderId }),
       })
-      loadData()
-    } catch (e) {
-      console.error('Failed to move document:', e)
+      if (!res.ok) throw new Error('Move drawing failed')
+      setAllDocs((prev) => prev.map((doc) => (doc.id === docId ? { ...doc, folderId } : doc)))
+    } catch (err) {
+      console.error('Failed to move document:', err)
+    } finally {
+      setDraggingDocId(null)
+      setMoveMenuDocId(null)
+      setOpenMenuId(null)
     }
-    setMovingDoc(null)
-    setMenuOpen(null)
   }
 
-  const toggleMenu = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    setMenuOpen(menuOpen === id ? null : id)
-    setMovingDoc(null)
+  const startRename = (id: string, kind: 'doc' | 'folder', currentName: string) => {
+    setRenameTarget({ id, kind })
+    setRenameValue(currentName)
   }
 
-  const showMoveMenu = (docId: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    setMovingDoc(docId)
+  const finishRename = async () => {
+    if (!renameTarget) return
+    const value = renameValue.trim()
+    if (!value) {
+      setRenameTarget(null)
+      return
+    }
+
+    try {
+      if (renameTarget.kind === 'folder') {
+        const res = await fetch(`/api/folders/${renameTarget.id}/rename`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: value }),
+        })
+        if (!res.ok) throw new Error('Rename folder failed')
+      } else {
+        const res = await fetch(`/api/rename/${renameTarget.id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ newName: value }),
+        })
+        if (!res.ok) throw new Error('Rename drawing failed')
+      }
+
+      await loadData()
+    } catch (err) {
+      console.error('Failed to rename:', err)
+    } finally {
+      setRenameTarget(null)
+      setOpenMenuId(null)
+      setMoveMenuDocId(null)
+    }
   }
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
-    const now = new Date()
-    const diff = now.getTime() - date.getTime()
-    
+    const diff = Date.now() - date.getTime()
     if (diff < 60000) return 'Just now'
     if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
     if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
     if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`
-    
     return date.toLocaleDateString()
   }
 
-  const currentFolderName = currentFolder 
-    ? folders.find(f => f.id === currentFolder)?.name || 'Folder'
-    : null
-
-  // All styles inline to avoid any CSS conflicts
-  const styles = {
-    container: {
-      minHeight: '100vh',
-      background: '#0d0d0d',
-      color: '#f5f5f5',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      overflowY: 'auto' as const,
-      WebkitOverflowScrolling: 'touch' as const,
-    } as React.CSSProperties,
-    inner: {
-      maxWidth: '1200px',
-      margin: '0 auto',
-      padding: '24px',
-    } as React.CSSProperties,
-    header: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: '32px',
-      flexWrap: 'wrap' as const,
-      gap: '16px',
-    } as React.CSSProperties,
-    logo: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '12px',
-    } as React.CSSProperties,
-    logoIcon: {
-      width: '36px',
-      height: '36px',
-      background: '#1d1d1d',
-      borderRadius: '8px',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-    } as React.CSSProperties,
-    title: {
-      margin: 0,
-      fontSize: '22px',
-      fontWeight: 600,
-    } as React.CSSProperties,
-    headerActions: {
-      display: 'flex',
-      gap: '12px',
-    } as React.CSSProperties,
-    newBtn: {
-      background: '#3b82f6',
-      color: 'white',
-      border: 'none',
-      padding: '12px 20px',
-      borderRadius: '10px',
-      fontSize: '14px',
-      fontWeight: 500,
-      cursor: 'pointer',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-    } as React.CSSProperties,
-    folderBtn: {
-      background: '#2a2a2a',
-      color: 'white',
-      border: '1px solid #3a3a3a',
-      padding: '12px 20px',
-      borderRadius: '10px',
-      fontSize: '14px',
-      fontWeight: 500,
-      cursor: 'pointer',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-    } as React.CSSProperties,
-    breadcrumb: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      marginBottom: '24px',
-      fontSize: '14px',
-    } as React.CSSProperties,
-    breadcrumbLink: {
-      color: '#3b82f6',
-      cursor: 'pointer',
-      background: 'none',
-      border: 'none',
-      fontSize: '14px',
-      padding: 0,
-    } as React.CSSProperties,
-    breadcrumbCurrent: {
-      color: '#999',
-    } as React.CSSProperties,
-    sectionTitle: {
-      fontSize: '14px',
-      fontWeight: 600,
-      marginBottom: '12px',
-      color: '#666',
-      textTransform: 'uppercase' as const,
-      letterSpacing: '0.5px',
-    } as React.CSSProperties,
-    grid: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-      gap: '16px',
-      marginBottom: '32px',
-    } as React.CSSProperties,
-    card: {
-      background: '#1a1a1a',
-      border: '1px solid #2a2a2a',
-      borderRadius: '12px',
-      overflow: 'hidden',
-      cursor: 'pointer',
-      transition: 'border-color 0.2s',
-      position: 'relative' as const,
-    } as React.CSSProperties,
-    folderCard: {
-      background: '#1a1a1a',
-      border: '1px solid #2a2a2a',
-      borderRadius: '12px',
-      padding: '16px',
-      cursor: 'pointer',
-      transition: 'border-color 0.2s',
-      position: 'relative' as const,
-      display: 'flex',
-      alignItems: 'center',
-      gap: '12px',
-    } as React.CSSProperties,
-    folderIcon: {
-      width: '40px',
-      height: '40px',
-      background: '#2a2a2a',
-      borderRadius: '8px',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      color: '#f59e0b',
-    } as React.CSSProperties,
-    folderInfo: {
-      flex: 1,
-      minWidth: 0,
-    } as React.CSSProperties,
-    thumbnail: {
-      aspectRatio: '16/10',
-      background: '#252525',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      color: '#555',
-    } as React.CSSProperties,
-    cardInfo: {
-      padding: '12px',
-    } as React.CSSProperties,
-    cardName: {
-      fontSize: '14px',
-      fontWeight: 500,
-      whiteSpace: 'nowrap' as const,
-      overflow: 'hidden',
-      textOverflow: 'ellipsis',
-      marginBottom: '4px',
-    } as React.CSSProperties,
-    cardDate: {
-      fontSize: '12px',
-      color: '#666',
-    } as React.CSSProperties,
-    menuBtn: {
-      position: 'absolute' as const,
-      top: '8px',
-      right: '8px',
-      width: '32px',
-      height: '32px',
-      background: 'rgba(0,0,0,0.7)',
-      border: 'none',
-      borderRadius: '6px',
-      color: '#aaa',
-      cursor: 'pointer',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-    } as React.CSSProperties,
-    menu: {
-      position: 'absolute' as const,
-      top: '44px',
-      right: '8px',
-      background: '#2a2a2a',
-      border: '1px solid #3a3a3a',
-      borderRadius: '8px',
-      overflow: 'hidden',
-      zIndex: 10,
-      minWidth: '150px',
-    } as React.CSSProperties,
-    menuItem: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      padding: '10px 14px',
-      border: 'none',
-      background: 'transparent',
-      color: '#f5f5f5',
-      fontSize: '13px',
-      cursor: 'pointer',
-      width: '100%',
-      textAlign: 'left' as const,
-    } as React.CSSProperties,
-    menuItemDanger: {
-      color: '#ef4444',
-    } as React.CSSProperties,
-    subMenu: {
-      background: '#333',
-      borderTop: '1px solid #444',
-    } as React.CSSProperties,
-    subMenuItem: {
-      padding: '8px 14px 8px 28px',
-      border: 'none',
-      background: 'transparent',
-      color: '#f5f5f5',
-      fontSize: '12px',
-      cursor: 'pointer',
-      width: '100%',
-      textAlign: 'left' as const,
-      display: 'block',
-    } as React.CSSProperties,
-    renameInput: {
-      width: '100%',
-      padding: '6px 8px',
-      background: '#252525',
-      border: '1px solid #3b82f6',
-      borderRadius: '4px',
-      color: '#fff',
-      fontSize: '14px',
-      outline: 'none',
-    } as React.CSSProperties,
-    empty: {
-      textAlign: 'center' as const,
-      padding: '60px 20px',
-      color: '#666',
-    } as React.CSSProperties,
-    emptyTitle: {
-      fontSize: '18px',
-      color: '#999',
-      marginBottom: '8px',
-    } as React.CSSProperties,
-    newFolderInput: {
-      display: 'flex',
-      gap: '8px',
-      marginBottom: '16px',
-    } as React.CSSProperties,
-  }
-
   return (
-    <div style={styles.container}>
-      <div style={styles.inner}>
-        {/* Header */}
-        <div style={styles.header}>
-          <div style={styles.logo}>
-            <div style={styles.logoIcon}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2">
-                <path d="M12 19l7-7 3 3-7 7-3-3z"/>
-                <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
-                <path d="M2 2l7.586 7.586"/>
-              </svg>
-            </div>
-            <h1 style={styles.title}>tldraw</h1>
+    <div className="dashboard-shell">
+      {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
+
+      <aside className={`dashboard-sidebar ${sidebarOpen ? 'open' : ''}`}>
+        <div className="dashboard-sidebar__top">
+          <div className="dashboard-brand">
+            <span className="dashboard-brand__dot" />
+            <h1>tldraw workspace</h1>
           </div>
-          <div style={styles.headerActions}>
-            <button style={styles.folderBtn} onClick={() => setShowNewFolderInput(true)}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
-                <path d="M12 11v6M9 14h6"/>
-              </svg>
-              New Folder
+          <button className="sidebar-close-btn" onClick={() => setSidebarOpen(false)} aria-label="Close folders panel">
+            Close
+          </button>
+        </div>
+
+        <p className="sidebar-section-label">Navigation</p>
+
+        <button
+          className={`folder-link ${currentFolder === null ? 'active drop-target' : ''}`}
+          onClick={() => {
+            setCurrentFolder(null)
+            setSidebarOpen(false)
+          }}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault()
+            const droppedDoc = e.dataTransfer.getData('text/plain') || draggingDocId
+            if (droppedDoc) moveDocToFolder(droppedDoc, null)
+          }}
+        >
+          <IconHome />
+          <span className="folder-link-text">Home</span>
+          <span className="folder-count">{folderDocCounts.rootCount}</span>
+        </button>
+
+        {folders.length > 0 && <p className="sidebar-section-label">Folders</p>}
+
+        <div className="folder-list">
+          {folders.map((folder) => {
+            const isRenaming = renameTarget?.id === folder.id && renameTarget.kind === 'folder'
+            return (
+              <div
+                key={folder.id}
+                className={`folder-item ${currentFolder === folder.id ? 'active drop-target' : ''}`}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const droppedDoc = e.dataTransfer.getData('text/plain') || draggingDocId
+                  if (droppedDoc) moveDocToFolder(droppedDoc, folder.id)
+                }}
+              >
+                {isRenaming ? (
+                  <input
+                    className="rename-input"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={finishRename}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') finishRename()
+                      if (e.key === 'Escape') setRenameTarget(null)
+                    }}
+                    autoFocus
+                  />
+                ) : (
+                  <div className="folder-row">
+                    <button
+                      className="folder-link"
+                      onClick={() => {
+                        setCurrentFolder(folder.id)
+                        setSidebarOpen(false)
+                      }}
+                    >
+                      <IconFolder />
+                      <span className="folder-link-text">{folder.name}</span>
+                      <span className="folder-count">{folderDocCounts.counts.get(folder.id) || 0}</span>
+                    </button>
+                    <button
+                      className="icon-menu-btn"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        const menuId = `folder-${folder.id}`
+                        setOpenMenuId((current) => (current === menuId ? null : menuId))
+                        setMoveMenuDocId(null)
+                      }}
+                      aria-label={`Actions for ${folder.name}`}
+                    >
+                      <IconDots />
+                    </button>
+                  </div>
+                )}
+
+                {openMenuId === `folder-${folder.id}` && (
+                  <div className="dropdown-menu" onClick={(e) => e.stopPropagation()}>
+                    <button onClick={() => startRename(folder.id, 'folder', folder.name)}>Rename</button>
+                    <button className="danger" onClick={() => deleteFolder(folder.id)}>
+                      Delete
+                    </button>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {creatingFolder ? (
+          <form className="new-folder-form" onSubmit={createFolder}>
+            <input
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              placeholder="Folder name"
+              autoFocus
+            />
+            <button type="submit">Create</button>
+            <button
+              type="button"
+              onClick={() => {
+                setCreatingFolder(false)
+                setNewFolderName('')
+              }}
+            >
+              Cancel
             </button>
-            <button style={styles.newBtn} onClick={createNew}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 5v14M5 12h14"/>
-              </svg>
+          </form>
+        ) : (
+          <button className="ghost-btn" onClick={() => setCreatingFolder(true)}>
+            + New Folder
+          </button>
+        )}
+      </aside>
+
+      <main className="dashboard-main">
+        <header className="main-header">
+          <div className="main-header-left">
+            <button className="mobile-menu-btn" onClick={() => setSidebarOpen((v) => !v)}>
+              <IconMenu />
+            </button>
+            <h2>{currentFolderName}</h2>
+          </div>
+          <div className="header-actions">
+            <div className="search-wrapper">
+              <IconSearch />
+              <input
+                className="search-input"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Search drawings..."
+              />
+            </div>
+            <button className="primary-btn" onClick={createNewDrawing}>
+              <IconPlus />
               New Drawing
             </button>
           </div>
-        </div>
+        </header>
 
-        {/* Breadcrumb */}
-        {currentFolder && (
-          <div style={styles.breadcrumb}>
-            <button style={styles.breadcrumbLink} onClick={goToRoot}>
-              Home
-            </button>
-            <span style={{ color: '#555' }}>/</span>
-            <span style={styles.breadcrumbCurrent}>{currentFolderName}</span>
-          </div>
-        )}
-
-        {/* New folder input */}
-        {showNewFolderInput && (
-          <div style={styles.newFolderInput}>
-            <input
-              style={{ ...styles.renameInput, flex: 1 }}
-              placeholder="Folder name..."
-              value={newFolderName}
-              onChange={e => setNewFolderName(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') createFolder()
-                if (e.key === 'Escape') setShowNewFolderInput(false)
-              }}
-              autoFocus
-            />
-            <button style={styles.newBtn} onClick={createFolder}>Create</button>
-            <button style={styles.folderBtn} onClick={() => setShowNewFolderInput(false)}>Cancel</button>
-          </div>
-        )}
+        <p className="hint-text">Tip: drag any drawing card and drop it onto a folder on the left to move it quickly.</p>
 
         {loading ? (
-          <div style={styles.empty}>Loading...</div>
+          <div className="empty-state">
+            <p>Loading...</p>
+          </div>
+        ) : error ? (
+          <div className="empty-state">
+            <p>{error}</p>
+          </div>
+        ) : visibleDocs.length === 0 ? (
+          <div className="empty-state">
+            <h3>No drawings yet</h3>
+            <p>Create a new drawing to get started, or drag drawings from another folder into this one.</p>
+          </div>
         ) : (
-          <>
-            {/* Folders (only show at root) */}
-            {!currentFolder && folders.length > 0 && (
-              <>
-                <h2 style={styles.sectionTitle}>Folders</h2>
-                <div style={styles.grid}>
-                  {folders.map(folder => (
-                    <div
-                      key={folder.id}
-                      style={styles.folderCard}
-                      onClick={() => openFolder(folder.id)}
-                    >
-                      <div style={styles.folderIcon}>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
-                        </svg>
-                      </div>
-                      <div style={styles.folderInfo}>
-                        {renaming === folder.id ? (
+          <section className="drawing-grid">
+            {visibleDocs.map((doc) => {
+              const isRenaming = renameTarget?.id === doc.id && renameTarget.kind === 'doc'
+              return (
+                <article
+                  key={doc.id}
+                  className="drawing-card"
+                  draggable
+                  onDragStart={(e) => {
+                    setDraggingDocId(doc.id)
+                    e.dataTransfer.setData('text/plain', doc.id)
+                  }}
+                  onDragEnd={() => setDraggingDocId(null)}
+                >
+                  <div className="drawing-card__preview" onClick={() => openDoc(doc.id)}>
+                    <span className="drawing-card__preview-label">Open canvas</span>
+                  </div>
+
+                  <div className="drawing-card__body">
+                    <div className="drawing-card__header">
+                      <div className="drawing-card__top">
+                        {isRenaming ? (
                           <input
-                            style={styles.renameInput}
+                            className="rename-input"
                             value={renameValue}
-                            onChange={e => setRenameValue(e.target.value)}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter') finishRename(folder.id, true)
-                              if (e.key === 'Escape') setRenaming(null)
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onBlur={finishRename}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') finishRename()
+                              if (e.key === 'Escape') setRenameTarget(null)
                             }}
-                            onBlur={() => finishRename(folder.id, true)}
-                            onClick={e => e.stopPropagation()}
                             autoFocus
                           />
                         ) : (
-                          <div style={styles.cardName}>{folder.name}</div>
+                          <button className="drawing-title" onClick={() => openDoc(doc.id)}>
+                            {doc.name}
+                          </button>
                         )}
+                        <span className="modified-at">{formatDate(doc.modifiedAt)}</span>
                       </div>
-                      
+
                       <button
-                        style={{ ...styles.menuBtn, position: 'relative', top: 0, right: 0, background: 'transparent' }}
-                        onClick={(e) => toggleMenu(folder.id, e)}
+                        className="icon-menu-btn"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const menuId = `doc-${doc.id}`
+                          setOpenMenuId((current) => (current === menuId ? null : menuId))
+                          setMoveMenuDocId(null)
+                        }}
+                        aria-label={`Actions for ${doc.name}`}
                       >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                          <circle cx="12" cy="5" r="2"/>
-                          <circle cx="12" cy="12" r="2"/>
-                          <circle cx="12" cy="19" r="2"/>
-                        </svg>
+                        <IconDots />
                       </button>
-                      
-                      {menuOpen === folder.id && (
-                        <div style={{ ...styles.menu, top: '50px', right: '0' }} onClick={e => e.stopPropagation()}>
-                          <button
-                            style={styles.menuItem}
-                            onClick={(e) => startRename(folder, e)}
-                            onMouseEnter={e => (e.currentTarget.style.background = '#3a3a3a')}
-                            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
-                              <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                            </svg>
-                            Rename
-                          </button>
-                          <button
-                            style={{ ...styles.menuItem, ...styles.menuItemDanger }}
-                            onClick={(e) => deleteFolder(folder.id, e)}
-                            onMouseEnter={e => (e.currentTarget.style.background = '#3a3a3a')}
-                            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/>
-                              <path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-                            </svg>
-                            Delete
-                          </button>
-                        </div>
-                      )}
                     </div>
-                  ))}
-                </div>
-              </>
-            )}
 
-            {/* Drawings */}
-            <h2 style={styles.sectionTitle}>
-              {currentFolder ? 'Drawings in this folder' : 'Drawings'}
-            </h2>
-
-            {docs.length === 0 ? (
-              <div style={styles.empty}>
-                <div style={styles.emptyTitle}>
-                  {currentFolder ? 'No drawings in this folder' : 'No drawings yet'}
-                </div>
-                <p>Create your first drawing to get started</p>
-              </div>
-            ) : (
-              <div style={styles.grid}>
-                {docs.map(doc => (
-                  <div
-                    key={doc.id}
-                    style={styles.card}
-                    onClick={() => openDoc(doc.id)}
-                  >
-                    <div style={styles.thumbnail}>
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                        <rect x="3" y="3" width="18" height="18" rx="2"/>
-                        <path d="M3 9h18"/>
-                      </svg>
-                    </div>
-                    <div style={styles.cardInfo}>
-                      {renaming === doc.id ? (
-                        <input
-                          style={styles.renameInput}
-                          value={renameValue}
-                          onChange={e => setRenameValue(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') finishRename(doc.id, false)
-                            if (e.key === 'Escape') setRenaming(null)
-                          }}
-                          onBlur={() => finishRename(doc.id, false)}
-                          onClick={e => e.stopPropagation()}
-                          autoFocus
-                        />
-                      ) : (
-                        <div style={styles.cardName}>{doc.name || doc.id}</div>
-                      )}
-                      <div style={styles.cardDate}>{formatDate(doc.modifiedAt)}</div>
-                    </div>
-                    
-                    {/* Menu button */}
-                    <button
-                      style={styles.menuBtn}
-                      onClick={(e) => toggleMenu(doc.id, e)}
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                        <circle cx="12" cy="5" r="2"/>
-                        <circle cx="12" cy="12" r="2"/>
-                        <circle cx="12" cy="19" r="2"/>
-                      </svg>
-                    </button>
-                    
-                    {/* Dropdown menu */}
-                    {menuOpen === doc.id && (
-                      <div style={styles.menu} onClick={e => e.stopPropagation()}>
+                    {openMenuId === `doc-${doc.id}` && (
+                      <div className="dropdown-menu" onClick={(e) => e.stopPropagation()}>
+                        <button onClick={() => openDoc(doc.id)}>Open</button>
+                        <button onClick={() => startRename(doc.id, 'doc', doc.name)}>Rename</button>
                         <button
-                          style={styles.menuItem}
-                          onClick={(e) => startRename(doc, e)}
-                          onMouseEnter={e => (e.currentTarget.style.background = '#3a3a3a')}
-                          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                          onClick={() => setMoveMenuDocId((current) => (current === doc.id ? null : doc.id))}
                         >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
-                            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                          </svg>
-                          Rename
-                        </button>
-                        <button
-                          style={styles.menuItem}
-                          onClick={(e) => showMoveMenu(doc.id, e)}
-                          onMouseEnter={e => (e.currentTarget.style.background = '#3a3a3a')}
-                          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
-                          </svg>
                           Move to...
                         </button>
-                        <button
-                          style={{ ...styles.menuItem, ...styles.menuItemDanger }}
-                          onClick={(e) => deleteDoc(doc.id, e)}
-                          onMouseEnter={e => (e.currentTarget.style.background = '#3a3a3a')}
-                          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/>
-                            <path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-                          </svg>
+                        <button className="danger" onClick={() => deleteDoc(doc.id)}>
                           Delete
                         </button>
-                        
-                        {/* Move submenu */}
-                        {movingDoc === doc.id && (
-                          <div style={styles.subMenu}>
-                            {currentFolder && (
-                              <button
-                                style={styles.subMenuItem}
-                                onClick={() => moveDocToFolder(doc.id, null)}
-                                onMouseEnter={e => (e.currentTarget.style.background = '#444')}
-                                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                              >
-                                📁 Root (Home)
-                              </button>
-                            )}
-                            {folders.filter(f => f.id !== currentFolder).map(folder => (
-                              <button
-                                key={folder.id}
-                                style={styles.subMenuItem}
-                                onClick={() => moveDocToFolder(doc.id, folder.id)}
-                                onMouseEnter={e => (e.currentTarget.style.background = '#444')}
-                                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                              >
-                                📁 {folder.name}
+
+                        {moveMenuDocId === doc.id && (
+                          <div className="dropdown-submenu">
+                            <button onClick={() => moveDocToFolder(doc.id, null)}>Home</button>
+                            {folders.map((folder) => (
+                              <button key={folder.id} onClick={() => moveDocToFolder(doc.id, folder.id)}>
+                                {folder.name}
                               </button>
                             ))}
                           </div>
@@ -725,12 +516,12 @@ export function Dashboard() {
                       </div>
                     )}
                   </div>
-                ))}
-              </div>
-            )}
-          </>
+                </article>
+              )
+            })}
+          </section>
         )}
-      </div>
+      </main>
     </div>
   )
 }
