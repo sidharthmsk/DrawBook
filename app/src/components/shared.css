@@ -1,0 +1,473 @@
+/* Shared UI styles - extracted from index.css */
+
+/* ─── Primary Button ─── */
+.primary-btn {
+  border: none;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border-radius: var(--radius-md);
+  padding: 9px 16px;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 500;
+  transition: all var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.primary-btn:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(224, 122, 95, 0.25);
+}
+
+.primary-btn:active {
+  transform: translateY(0);
+}
+
+/* ─── Dropdown Menus ─── */
+.dropdown-menu {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  padding: 4px;
+  display: grid;
+  gap: 2px;
+  box-shadow: var(--shadow-dropdown);
+  min-width: 140px;
+  z-index: 50;
+  animation: dropdown-in 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.dropdown-menu button {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 13px;
+  transition: all var(--transition-fast);
+}
+
+.dropdown-menu button:hover {
+  background: var(--bg-surface-3);
+  color: var(--text-primary);
+}
+
+.dropdown-menu .danger {
+  color: var(--danger);
+}
+
+.dropdown-menu .danger:hover {
+  background: var(--danger-muted);
+  color: var(--danger);
+}
+
+/* ─── Popout Submenu (Move to...) ─── */
+.dropdown-menu__hover-parent {
+  position: relative;
+}
+
+.dropdown-menu__has-sub {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+}
+
+.dropdown-menu__has-sub svg {
+  opacity: 0.4;
+}
+
+.dropdown-popout {
+  position: absolute;
+  left: calc(100% + 4px);
+  top: -4px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  padding: 4px;
+  display: grid;
+  gap: 0;
+  box-shadow: var(--shadow-dropdown);
+  min-width: 160px;
+  max-height: 300px;
+  overflow-y: auto;
+  z-index: 60;
+  animation: dropdown-in 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.dropdown-popout button {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 13px;
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dropdown-popout button:hover {
+  background: var(--bg-surface-3);
+  color: var(--text-primary);
+}
+
+.dropdown-popout button svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+.dropdown-submenu {
+  margin-top: 2px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 4px;
+  display: grid;
+  gap: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.dropdown-submenu button {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.dropdown-submenu button svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+/* ─── Context Menu Portal (right-click) ─── */
+.context-menu-portal {
+  position: fixed;
+  z-index: 200;
+}
+
+/* Inline menus are on the right edge, so popout goes left */
+.doc-row__actions .dropdown-popout {
+  left: auto;
+  right: calc(100% + 4px);
+}
+
+/* ─── Drag Ghost ─── */
+.drag-ghost {
+  position: fixed;
+  top: -100px;
+  left: -100px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ─── Shortcuts Help ─── */
+.shortcuts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.shortcuts-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+.shortcuts-kbd {
+  display: inline-block;
+  min-width: 56px;
+  text-align: center;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-default);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+/* ─── Kicker / Breadcrumb ─── */
+.kicker {
+  display: none;
+}
+
+/* ─── Upload / Icon Action Button ─── */
+.icon-action-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface-1);
+  color: var(--text-secondary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.icon-action-btn:hover {
+  background: var(--bg-surface-2);
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+
+.icon-menu-btn {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.icon-menu-btn:hover {
+  background: var(--bg-surface-3);
+  color: var(--text-secondary);
+}
+
+/* ─── Confirm Dialog ─── */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  animation: confirm-fade-in var(--transition-fast) both;
+}
+
+@keyframes confirm-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes confirm-slide-up {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.confirm-dialog {
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  padding: 24px;
+  animation: confirm-slide-up var(--transition-slow) both;
+}
+
+.confirm-dialog__message {
+  margin: 0 0 20px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+
+.confirm-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.confirm-dialog__btn {
+  padding: 8px 18px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.confirm-dialog__btn--cancel {
+  background: var(--bg-surface-3);
+  border-color: var(--border-default);
+  color: var(--text-secondary);
+}
+
+.confirm-dialog__btn--cancel:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+
+.confirm-dialog__btn--confirm {
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.confirm-dialog__btn--confirm:hover {
+  background: var(--accent-hover);
+}
+
+.confirm-dialog__btn--danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.confirm-dialog__btn--danger:hover {
+  background: #c04040;
+}
+
+/* ─── Quick Switcher Overlay ─── */
+.quick-switcher-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 9999;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 15vh;
+}
+
+.quick-switcher {
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  width: 580px;
+  max-height: 480px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+  overflow: hidden;
+}
+
+.quick-switcher__input {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-primary);
+  font-size: 16px;
+  padding: 14px 16px;
+  outline: none;
+  width: 100%;
+}
+
+.quick-switcher__input::placeholder {
+  color: var(--text-secondary);
+}
+
+.quick-switcher__results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.quick-switcher__empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.quick-switcher__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.quick-switcher__item:hover,
+.quick-switcher__item--selected {
+  background: var(--bg-surface-3);
+}
+
+.quick-switcher__type-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.quick-switcher__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-switcher__path {
+  color: var(--text-secondary);
+  font-size: 12px;
+  flex-shrink: 0;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-switcher__type-badge {
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-surface-3);
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.quick-switcher__footer {
+  border-top: 1px solid var(--border-default);
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}

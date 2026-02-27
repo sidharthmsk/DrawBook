@@ -12,7 +12,6 @@ import {
   type Node,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-
 import { FileNode } from "./mindmap/FileNode";
 import { FolderNode } from "./mindmap/FolderNode";
 import { MindMapContextMenu } from "./mindmap/MindMapContextMenu";

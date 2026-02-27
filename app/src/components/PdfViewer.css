@@ -1,0 +1,58 @@
+/* PDF Viewer - extracted from index.css */
+
+/* ─── PDF Viewer ─── */
+.pdf-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.pdf-nav-btn {
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface-2);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 12px;
+  transition: all var(--transition-fast);
+}
+
+.pdf-nav-btn:hover:not(:disabled) {
+  background: var(--bg-surface-3);
+  color: var(--text-primary);
+}
+
+.pdf-nav-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pdf-page-info {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 50px;
+  text-align: center;
+}
+
+.pdf-separator {
+  color: var(--border-default);
+}
+
+.pdf-container {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg-base);
+}
+
+.pdf-canvas {
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+  border-radius: 2px;
+}

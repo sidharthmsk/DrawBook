@@ -1,95 +1,21 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import ReactMarkdown from "react-markdown";
 import type { EditorAdapter } from "./EditorAdapter";
-import { renderWithLinks } from "../DocumentLink";
 import {
   DocumentContextPicker,
   type AttachedContext,
 } from "./DocumentContextPicker";
-
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = () => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
-  return (
-    <button
-      className={`ai-chat-panel__copy-btn${copied ? " ai-chat-panel__copy-btn--copied" : ""}`}
-      onClick={handleCopy}
-      title="Copy to clipboard"
-    >
-      {copied ? (
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-        >
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-      ) : (
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-        >
-          <rect x="9" y="9" width="13" height="13" rx="2" />
-          <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-        </svg>
-      )}
-    </button>
-  );
-}
-
-interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-  aiContent?: string;
-  aiContentType?: string;
-  applied?: boolean;
-  rating?: "up" | "down";
-  timestamp?: number;
-}
-
-interface AiChatPanelProps {
-  adapter: EditorAdapter;
-  onClose: () => void;
-  documentId?: string;
-  fullScreen?: boolean;
-}
-
-const CHAT_STORAGE_PREFIX = "drawbook-chat-";
-const MAX_STORED_MESSAGES = 50;
-
-function loadStoredMessages(docId?: string): ChatMessage[] {
-  if (!docId) return [];
-  try {
-    const raw = localStorage.getItem(CHAT_STORAGE_PREFIX + docId);
-    if (raw) return JSON.parse(raw) as ChatMessage[];
-  } catch {}
-  return [];
-}
-
-function saveStoredMessages(docId: string | undefined, msgs: ChatMessage[]) {
-  if (!docId) return;
-  try {
-    const trimmed = msgs.slice(-MAX_STORED_MESSAGES);
-    localStorage.setItem(CHAT_STORAGE_PREFIX + docId, JSON.stringify(trimmed));
-  } catch {}
-}
-
-const AI_PANEL_WIDTH_KEY = "drawbook-ai-panel-width";
-const MIN_PANEL_WIDTH = 280;
-const MAX_PANEL_WIDTH = 600;
-const DEFAULT_PANEL_WIDTH = 360;
+import { loadStoredMessages, saveStoredMessages } from "./chatStorage";
+import {
+  type ChatMessage,
+  type AiChatPanelProps,
+  CHAT_STORAGE_PREFIX,
+  AI_PANEL_WIDTH_KEY,
+  MIN_PANEL_WIDTH,
+  MAX_PANEL_WIDTH,
+  DEFAULT_PANEL_WIDTH,
+} from "./types";
+import { AiChatMessageList } from "./AiChatMessageList";
+import { AiChatInput } from "./AiChatInput";
 
 export function AiChatPanel({
   adapter,
@@ -275,15 +201,17 @@ export function AiChatPanel({
                   ),
                 );
               }
-            } catch (parseErr: any) {
-              if (parseErr.message && parseErr.message !== "No response body") {
+            } catch (parseErr: unknown) {
+              const err = parseErr as { message?: string };
+              if (err.message && err.message !== "No response body") {
                 throw parseErr;
               }
             }
           }
         }
-      } catch (e: any) {
-        setError(e?.message || "Failed to get response");
+      } catch (e: unknown) {
+        const err = e as { message?: string };
+        setError(err?.message || "Failed to get response");
         lastFailedMessages.current = updatedMessages;
       } finally {
         setLoading(false);
@@ -341,8 +269,9 @@ export function AiChatPanel({
           aiContentType: data.contentType,
         },
       ]);
-    } catch (e: any) {
-      setError(e?.message || "Failed to get response");
+    } catch (e: unknown) {
+      const err = e as { message?: string };
+      setError(err?.message || "Failed to get response");
       lastFailedMessages.current = failedMsgs;
     } finally {
       setLoading(false);
@@ -377,6 +306,50 @@ export function AiChatPanel({
       );
     },
     [messages, adapter],
+  );
+
+  const handleRateUp = useCallback(
+    (index: number) => {
+      const msg = messages[index];
+      if (!msg) return;
+      const newRating = msg.rating === "up" ? undefined : ("up" as const);
+      setMessages((prev) =>
+        prev.map((m, j) => (j === index ? { ...m, rating: newRating } : m)),
+      );
+      fetch("/api/ai/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          documentId,
+          messageIndex: index,
+          rating: newRating || "none",
+          content: msg.content.slice(0, 200),
+        }),
+      }).catch(() => {});
+    },
+    [messages, documentId],
+  );
+
+  const handleRateDown = useCallback(
+    (index: number) => {
+      const msg = messages[index];
+      if (!msg) return;
+      const newRating = msg.rating === "down" ? undefined : ("down" as const);
+      setMessages((prev) =>
+        prev.map((m, j) => (j === index ? { ...m, rating: newRating } : m)),
+      );
+      fetch("/api/ai/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          documentId,
+          messageIndex: index,
+          rating: newRating || "none",
+          content: msg.content.slice(0, 200),
+        }),
+      }).catch(() => {});
+    },
+    [messages, documentId],
   );
 
   const applyLabel =
@@ -467,207 +440,18 @@ export function AiChatPanel({
             <p className="ai-chat-panel__hint">Powered by Groq</p>
           </div>
         )}
-        {messages.map((msg, i) => {
-          const prevMsg = i > 0 ? messages[i - 1] : null;
-          const isGrouped = prevMsg?.role === msg.role;
-          const timeStr = msg.timestamp
-            ? new Intl.DateTimeFormat(undefined, {
-                hour: "numeric",
-                minute: "2-digit",
-              }).format(msg.timestamp)
-            : "";
-          return (
-            <div
-              key={i}
-              className={`ai-chat-panel__message ai-chat-panel__message--${msg.role}${isGrouped ? " ai-chat-panel__message--grouped" : ""}`}
-            >
-              <div className="ai-chat-panel__message-content">
-                {msg.role === "assistant" ? (
-                  <ReactMarkdown
-                    components={{
-                      code({ className, children, ...props }) {
-                        const isInline = !className;
-                        return isInline ? (
-                          <code className="ai-inline-code" {...props}>
-                            {children}
-                          </code>
-                        ) : (
-                          <pre className="ai-code-block">
-                            <code className={className} {...props}>
-                              {children}
-                            </code>
-                          </pre>
-                        );
-                      },
-                      p({ children }) {
-                        const text =
-                          typeof children === "string" ? children : "";
-                        if (text && /\[\[.+?\]\]/.test(text)) {
-                          return <p>{renderWithLinks(text)}</p>;
-                        }
-                        return <p>{children}</p>;
-                      },
-                    }}
-                  >
-                    {msg.content}
-                  </ReactMarkdown>
-                ) : (
-                  msg.content
-                )}
-              </div>
-              {msg.role === "assistant" && msg.content && (
-                <div className="ai-chat-panel__msg-actions">
-                  <CopyButton text={msg.content} />
-                  <button
-                    className={`ai-chat-panel__rate-btn${msg.rating === "up" ? " ai-chat-panel__rate-btn--active" : ""}`}
-                    onClick={() => {
-                      const newRating =
-                        msg.rating === "up" ? undefined : ("up" as const);
-                      setMessages((prev) =>
-                        prev.map((m, j) =>
-                          j === i ? { ...m, rating: newRating } : m,
-                        ),
-                      );
-                      fetch("/api/ai/feedback", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          documentId,
-                          messageIndex: i,
-                          rating: newRating || "none",
-                          content: msg.content.slice(0, 200),
-                        }),
-                      }).catch(() => {});
-                    }}
-                    title="Good response"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill={msg.rating === "up" ? "currentColor" : "none"}
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z" />
-                      <path d="M7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3" />
-                    </svg>
-                  </button>
-                  <button
-                    className={`ai-chat-panel__rate-btn${msg.rating === "down" ? " ai-chat-panel__rate-btn--active" : ""}`}
-                    onClick={() => {
-                      const newRating =
-                        msg.rating === "down" ? undefined : ("down" as const);
-                      setMessages((prev) =>
-                        prev.map((m, j) =>
-                          j === i ? { ...m, rating: newRating } : m,
-                        ),
-                      );
-                      fetch("/api/ai/feedback", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          documentId,
-                          messageIndex: i,
-                          rating: newRating || "none",
-                          content: msg.content.slice(0, 200),
-                        }),
-                      }).catch(() => {});
-                    }}
-                    title="Poor response"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill={msg.rating === "down" ? "currentColor" : "none"}
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10z" />
-                      <path d="M17 2h3a2 2 0 012 2v7a2 2 0 01-2 2h-3" />
-                    </svg>
-                  </button>
-                </div>
-              )}
-              {msg.role === "assistant" && msg.aiContent && (
-                <button
-                  className={`ai-chat-panel__apply-btn${msg.applied ? " ai-chat-panel__apply-btn--applied" : ""}`}
-                  onClick={() => handleApply(i)}
-                  disabled={msg.applied}
-                >
-                  {msg.applied ? (
-                    <>
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                      >
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                      Applied
-                    </>
-                  ) : (
-                    <>
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                      >
-                        <path d="M12 5v14M5 12h14" />
-                      </svg>
-                      {applyLabel}
-                    </>
-                  )}
-                </button>
-              )}
-              {timeStr && (
-                <span className="ai-chat-panel__timestamp">{timeStr}</span>
-              )}
-            </div>
-          );
-        })}
-        {loading && (
-          <div className="ai-chat-panel__message ai-chat-panel__message--assistant">
-            <div className="ai-chat-panel__typing">
-              <span />
-              <span />
-              <span />
-            </div>
-          </div>
-        )}
-        {error && (
-          <div className="ai-chat-panel__error">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <line x1="15" y1="9" x2="9" y2="15" />
-              <line x1="9" y1="9" x2="15" y2="15" />
-            </svg>
-            <span>{error}</span>
-            {lastFailedMessages.current && (
-              <button
-                className="ai-chat-panel__retry-btn"
-                onClick={retryLastMessage}
-              >
-                Retry
-              </button>
-            )}
-          </div>
-        )}
-        <div ref={messagesEndRef} />
+        <AiChatMessageList
+          messages={messages}
+          applyLabel={applyLabel}
+          loading={loading}
+          error={error}
+          hasRetry={!!lastFailedMessages.current}
+          messagesEndRef={messagesEndRef}
+          onApply={handleApply}
+          onRateUp={handleRateUp}
+          onRateDown={handleRateDown}
+          onRetry={retryLastMessage}
+        />
       </div>
 
       <div className="ai-chat-panel__context">
@@ -733,37 +517,14 @@ export function AiChatPanel({
         }
       />
 
-      <div className="ai-chat-panel__input-area">
-        <textarea
-          ref={inputRef}
-          className="ai-chat-panel__input"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Ask AI anything..."
-          rows={2}
-          disabled={loading}
-        />
-        <button
-          className="ai-chat-panel__send"
-          onClick={() => sendMessage()}
-          disabled={loading || !input.trim()}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <line x1="22" y1="2" x2="11" y2="13" />
-            <polygon points="22 2 15 22 11 13 2 9 22 2" />
-          </svg>
-        </button>
-      </div>
+      <AiChatInput
+        value={input}
+        loading={loading}
+        inputRef={inputRef}
+        onChange={setInput}
+        onKeyDown={handleKeyDown}
+        onSend={() => sendMessage()}
+      />
     </div>
   );
 }
