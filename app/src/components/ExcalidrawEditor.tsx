@@ -316,48 +316,8 @@ export function ExcalidrawEditor({ documentId }: ExcalidrawEditorProps) {
     excalidrawProps.initialData = { libraryItems };
   }
 
-  return (
-    <EditorShell
-      documentId={documentId}
-      adapter={adapter}
-      saveStatus={saveStatus}
-      onExport={handleExport}
-      exportLabel={exportFormat === "svg" ? "Export SVG" : "Export PNG"}
-      exportExtra={
-        <>
-          <select
-            className="export-format-select"
-            value={exportFormat}
-            onChange={(e) => setExportFormat(e.target.value as "png" | "svg")}
-          >
-            <option value="png">PNG</option>
-            <option value="svg">SVG</option>
-          </select>
-          <button
-            className={`editor-topbar-btn${flowchartOpen ? " editor-topbar-btn--active" : ""}`}
-            onClick={() => setFlowchartOpen((v) => !v)}
-            title="Generate flowchart from documents"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="1" y="1" width="5" height="4" rx="1" />
-              <rect x="10" y="1" width="5" height="4" rx="1" />
-              <rect x="5.5" y="11" width="5" height="4" rx="1" />
-              <path d="M3.5 5v3h4.5v3M12.5 5v3H8v3" />
-            </svg>
-            <span>Flowchart</span>
-          </button>
-        </>
-      }
-    >
+  const editorBody = (
+    <>
       {flowchartOpen && (
         <div
           className={`flowchart-panel${isMobile ? " flowchart-panel--mobile-overlay" : ""}`}
@@ -414,6 +374,57 @@ export function ExcalidrawEditor({ documentId }: ExcalidrawEditorProps) {
           {...excalidrawProps}
         />
       </div>
+    </>
+  );
+
+  if (isMobile) {
+    return <div className="excalidraw-mobile-host">{editorBody}</div>;
+  }
+
+  return (
+    <EditorShell
+      documentId={documentId}
+      adapter={adapter}
+      saveStatus={saveStatus}
+      mobileImmersive
+      onExport={handleExport}
+      exportLabel={exportFormat === "svg" ? "Export SVG" : "Export PNG"}
+      exportExtra={
+        <>
+          <select
+            className="export-format-select"
+            value={exportFormat}
+            onChange={(e) => setExportFormat(e.target.value as "png" | "svg")}
+          >
+            <option value="png">PNG</option>
+            <option value="svg">SVG</option>
+          </select>
+          <button
+            className={`editor-topbar-btn${flowchartOpen ? " editor-topbar-btn--active" : ""}`}
+            onClick={() => setFlowchartOpen((v) => !v)}
+            title="Generate flowchart from documents"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="1" y="1" width="5" height="4" rx="1" />
+              <rect x="10" y="1" width="5" height="4" rx="1" />
+              <rect x="5.5" y="11" width="5" height="4" rx="1" />
+              <path d="M3.5 5v3h4.5v3M12.5 5v3H8v3" />
+            </svg>
+            <span>Flowchart</span>
+          </button>
+        </>
+      }
+    >
+      {editorBody}
     </EditorShell>
   );
 }

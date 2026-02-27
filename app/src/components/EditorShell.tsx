@@ -30,6 +30,7 @@ interface EditorShellProps {
   onExport?: () => void;
   exportLabel?: string;
   exportExtra?: ReactNode;
+  mobileImmersive?: boolean;
 }
 
 function MobileOverflowMenu({ children }: { children: ReactNode }) {
@@ -99,8 +100,10 @@ export function EditorShell({
   onExport,
   exportLabel,
   exportExtra,
+  mobileImmersive = false,
 }: EditorShellProps) {
   const isMobile = useIsMobile();
+  const immersiveMobile = isMobile && mobileImmersive;
   const confirm = useConfirm();
   const [aiOpen, setAiOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -630,54 +633,69 @@ export function EditorShell({
   ) : null;
 
   return (
-    <div className="editor-wrapper">
-      <div className="editor-topbar">
-        <button
-          className="editor-back-btn"
-          onClick={() => (window.location.href = "/")}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+    <div
+      className={`editor-wrapper${immersiveMobile ? " editor-wrapper--mobile-immersive" : ""}`}
+    >
+      {!immersiveMobile && (
+        <div className="editor-topbar">
+          <button
+            className="editor-back-btn"
+            onClick={() => (window.location.href = "/")}
           >
-            <path d="M10 12L6 8l4-4" />
-          </svg>
-          <span className="editor-topbar__btn-label">Back</span>
-        </button>
-        {!isMobile && breadcrumbs.length > 0 && (
-          <nav className="editor-breadcrumbs">
-            {breadcrumbs.map((crumb, i) => (
-              <span key={crumb.id ?? "home"}>
-                {i > 0 && <span className="editor-breadcrumbs__sep">/</span>}
-                <a
-                  className="editor-breadcrumbs__link"
-                  href={crumb.id ? `/?folder=${crumb.id}` : "/"}
-                >
-                  {crumb.name}
-                </a>
-              </span>
-            ))}
-            <span className="editor-breadcrumbs__sep">/</span>
-          </nav>
-        )}
-        <EditableTitle documentId={documentId} />
-        <div className="editor-topbar__right">
-          <div className="editor-topbar__status">
-            <span
-              className={`editor-status-dot editor-status-dot--${dotClass}`}
-            />
-            <span className="editor-topbar__status-label">{statusLabel}</span>
-          </div>
-          {isMobile ? (
-            <>
-              {paletteButton}
-              <MobileOverflowMenu>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M10 12L6 8l4-4" />
+            </svg>
+            <span className="editor-topbar__btn-label">Back</span>
+          </button>
+          {!isMobile && breadcrumbs.length > 0 && (
+            <nav className="editor-breadcrumbs">
+              {breadcrumbs.map((crumb, i) => (
+                <span key={crumb.id ?? "home"}>
+                  {i > 0 && <span className="editor-breadcrumbs__sep">/</span>}
+                  <a
+                    className="editor-breadcrumbs__link"
+                    href={crumb.id ? `/?folder=${crumb.id}` : "/"}
+                  >
+                    {crumb.name}
+                  </a>
+                </span>
+              ))}
+              <span className="editor-breadcrumbs__sep">/</span>
+            </nav>
+          )}
+          <EditableTitle documentId={documentId} />
+          <div className="editor-topbar__right">
+            <div className="editor-topbar__status">
+              <span
+                className={`editor-status-dot editor-status-dot--${dotClass}`}
+              />
+              <span className="editor-topbar__status-label">{statusLabel}</span>
+            </div>
+            {isMobile ? (
+              <>
+                {paletteButton}
+                <MobileOverflowMenu>
+                  {infoButton}
+                  {historyButton}
+                  {exportButton}
+                  {exportExtra}
+                  {templateButton}
+                  {taskButton}
+                  {shareButton}
+                </MobileOverflowMenu>
+                {aiToggle}
+              </>
+            ) : (
+              <>
                 {infoButton}
                 {historyButton}
                 {exportButton}
@@ -685,25 +703,14 @@ export function EditorShell({
                 {templateButton}
                 {taskButton}
                 {shareButton}
-              </MobileOverflowMenu>
-              {aiToggle}
-            </>
-          ) : (
-            <>
-              {infoButton}
-              {historyButton}
-              {exportButton}
-              {exportExtra}
-              {templateButton}
-              {taskButton}
-              {shareButton}
-              {paletteButton}
-              {aiToggle}
-            </>
-          )}
+                {paletteButton}
+                {aiToggle}
+              </>
+            )}
+          </div>
         </div>
-      </div>
-      {infoOpen && docMeta && (
+      )}
+      {!immersiveMobile && infoOpen && docMeta && (
         <div className="editor-info-bar">
           <span>
             <strong>Type:</strong> {docMeta.type || "unknown"}
@@ -726,7 +733,7 @@ export function EditorShell({
           )}
         </div>
       )}
-      {versionOpen && (
+      {!immersiveMobile && versionOpen && (
         <div className="editor-version-bar">
           <strong>Version History</strong>
           {versions.length === 0 ? (
