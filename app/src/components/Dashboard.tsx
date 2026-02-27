@@ -510,7 +510,11 @@ function DocContextMenu({
   );
 }
 
-export function Dashboard() {
+interface AppConfig {
+  enableTldraw: boolean;
+}
+
+export function Dashboard({ config }: { config: AppConfig }) {
   const confirm = useConfirm();
   const [allDocs, setAllDocs] = useState<DocumentItem[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -1316,21 +1320,23 @@ export function Dashboard() {
                       "spreadsheet",
                       "kanban",
                     ] as DocumentType[]
-                  ).map((type) => {
-                    const conf = TYPE_CONFIG[type];
-                    const Icon = TYPE_ICONS[type];
-                    return (
-                      <button
-                        key={type}
-                        onClick={() => createNewDocument(type)}
-                      >
-                        <span style={{ color: conf.color, display: "flex" }}>
-                          <Icon />
-                        </span>
-                        <span>{conf.label}</span>
-                      </button>
-                    );
-                  })}
+                  )
+                    .filter((type) => type !== "tldraw" || config.enableTldraw)
+                    .map((type) => {
+                      const conf = TYPE_CONFIG[type];
+                      const Icon = TYPE_ICONS[type];
+                      return (
+                        <button
+                          key={type}
+                          onClick={() => createNewDocument(type)}
+                        >
+                          <span style={{ color: conf.color, display: "flex" }}>
+                            <Icon />
+                          </span>
+                          <span>{conf.label}</span>
+                        </button>
+                      );
+                    })}
                 </div>
               )}
             </div>
