@@ -12,10 +12,6 @@ import {
 } from "tldraw";
 import { createTldrawAdapter } from "./ai/EditorAdapter";
 import type { EditorAdapter } from "./ai/EditorAdapter";
-import { PreviewShapeUtil } from "./ai/PreviewShape";
-import { MakeRealButton } from "./ai/MakeRealButton";
-
-const customShapeUtils = [...defaultShapeUtils, PreviewShapeUtil];
 
 interface TldrawEditorProps {
   documentId: string;
@@ -56,7 +52,11 @@ export function TldrawEditor({
 
       if (data.snapshot) {
         isRemoteChange.current = true;
-        loadSnapshot(editor.store, data.snapshot);
+        try {
+          loadSnapshot(editor.store, data.snapshot);
+        } catch (err) {
+          console.warn("Failed to reload snapshot from server:", err);
+        }
         isRemoteChange.current = false;
       }
     } catch (error) {
@@ -105,9 +105,16 @@ export function TldrawEditor({
   const store = useMemo(() => {
     if (initialSnapshot === undefined) return undefined;
 
-    const newStore = createTLStore({ shapeUtils: customShapeUtils });
+    const newStore = createTLStore({ shapeUtils: defaultShapeUtils });
     if (initialSnapshot) {
-      loadSnapshot(newStore, initialSnapshot);
+      try {
+        loadSnapshot(newStore, initialSnapshot);
+      } catch (err) {
+        console.warn(
+          "Failed to load snapshot (schema may be incompatible), starting with empty canvas:",
+          err,
+        );
+      }
     }
     return newStore;
   }, [initialSnapshot]);
@@ -324,13 +331,7 @@ export function TldrawEditor({
       onExport={handleExport}
       exportLabel="Export SVG"
     >
-      <Tldraw
-        store={store}
-        onMount={handleMount}
-        autoFocus
-        shapeUtils={[PreviewShapeUtil]}
-      >
-        <MakeRealButton />
+      <Tldraw store={store} onMount={handleMount} autoFocus>
         <div className="tldraw-theme-toggle">
           <button
             className="tldraw-theme-toggle__btn"

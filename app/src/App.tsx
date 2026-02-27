@@ -11,7 +11,7 @@ import { GridEditor } from "./components/GridEditor";
 import { Dashboard } from "./components/Dashboard";
 import { LoginPage } from "./components/LoginPage";
 import { ConfirmProvider } from "./components/ConfirmDialog";
-import { QuickSwitcher } from "./components/QuickSwitcher";
+import { CommandPalette, pushRecentDoc } from "./components/CommandPalette";
 import { setLinkingEnabled } from "./components/DocumentLink";
 
 type DocumentType =
@@ -71,6 +71,7 @@ export interface AppConfig {
   enableLinking: boolean;
   storageBackend: string;
   isElectron: boolean;
+  multiUser: boolean;
 }
 
 const DEFAULT_CONFIG: AppConfig = {
@@ -78,6 +79,7 @@ const DEFAULT_CONFIG: AppConfig = {
   enableLinking: false,
   storageBackend: "local",
   isElectron: false,
+  multiUser: false,
 };
 
 function App() {
@@ -85,6 +87,10 @@ function App() {
     "checking" | "login" | "authenticated"
   >("checking");
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
+  const [multiUserInfo, setMultiUserInfo] = useState<{
+    multiUser: boolean;
+    hasUsers: boolean;
+  }>({ multiUser: false, hasUsers: true });
 
   useEffect(() => {
     const token = localStorage.getItem("drawbook_token") || "";
@@ -101,6 +107,10 @@ function App() {
       .then(([authData, configData]) => {
         setConfig(configData);
         setLinkingEnabled(!!configData.enableLinking);
+        setMultiUserInfo({
+          multiUser: !!authData.multiUser,
+          hasUsers: authData.hasUsers !== false,
+        });
         if (!authData.required || authData.authenticated) {
           if (token) injectAuthFetch(token);
           setAuthState("authenticated");
@@ -125,7 +135,13 @@ function App() {
   }
 
   if (authState === "login") {
-    return <LoginPage onLogin={handleLogin} />;
+    return (
+      <LoginPage
+        onLogin={handleLogin}
+        multiUser={multiUserInfo.multiUser}
+        hasUsers={multiUserInfo.hasUsers}
+      />
+    );
   }
 
   return (
@@ -135,9 +151,83 @@ function App() {
   );
 }
 
+function SharedDocumentViewer() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const sharedToken = urlParams.get("shared")!;
+  const [sharedMeta, setSharedMeta] = useState<{
+    type: string;
+    name: string;
+    permission: string;
+    sharedBy: string;
+    documentId: string;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    fetch(`/api/shared/${sharedToken}/meta`)
+      .then((r) => {
+        if (!r.ok) throw new Error("Not found");
+        return r.json();
+      })
+      .then((data) => setSharedMeta(data))
+      .catch(() => setError("This share link is invalid or has expired."))
+      .finally(() => setLoading(false));
+  }, [sharedToken]);
+
+  if (loading) {
+    return (
+      <div className="editor-loading">
+        <div className="editor-loading__spinner" />
+        Loading shared document...
+      </div>
+    );
+  }
+
+  if (error || !sharedMeta) {
+    return (
+      <div className="editor-loading">
+        <div style={{ textAlign: "center", maxWidth: 420 }}>
+          <h2 style={{ margin: "0 0 8px" }}>Shared Document</h2>
+          <p style={{ opacity: 0.7, margin: 0 }}>
+            {error || "Document not found"}
+          </p>
+          <a
+            href="/"
+            style={{
+              display: "inline-block",
+              marginTop: 16,
+              color: "var(--accent)",
+            }}
+          >
+            Go to Dashboard
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="editor-loading">
+      <div style={{ textAlign: "center", maxWidth: 420 }}>
+        <h2 style={{ margin: "0 0 8px" }}>
+          {sharedMeta.name || "Shared Document"}
+        </h2>
+        <p style={{ opacity: 0.7, margin: "0 0 4px" }}>
+          Shared by {sharedMeta.sharedBy} ({sharedMeta.permission} access)
+        </p>
+        <p style={{ opacity: 0.5, margin: 0, fontSize: 13 }}>
+          Type: {sharedMeta.type}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function AppRouter({ config }: { config: AppConfig }) {
   const urlParams = new URLSearchParams(window.location.search);
   const documentId = urlParams.get("doc");
+  const sharedToken = urlParams.get("shared");
   const folderId = urlParams.get("folder") ?? undefined;
   const urlType = urlParams.get("type") as DocumentType | null;
 
@@ -166,10 +256,32 @@ function AppRouter({ config }: { config: AppConfig }) {
       .finally(() => setLoading(false));
   }, [documentId, urlType]);
 
+  // Track recently opened documents
+  useEffect(() => {
+    if (!documentId) return;
+    const type = resolvedType || urlType || typeFromId(documentId);
+    fetch(`/api/meta/${documentId}`)
+      .then((r) => r.json())
+      .then((meta) => {
+        pushRecentDoc({
+          id: documentId,
+          name: meta.name || documentId,
+          type,
+        });
+      })
+      .catch(() => {
+        pushRecentDoc({ id: documentId, name: documentId, type });
+      });
+  }, [documentId, resolvedType, urlType]);
+
+  if (sharedToken) {
+    return <SharedDocumentViewer />;
+  }
+
   if (!documentId) {
     return (
       <>
-        <QuickSwitcher folders={qsFolders} />
+        <CommandPalette folders={qsFolders} context="dashboard" />
         <Dashboard config={config} />
       </>
     );
@@ -237,7 +349,11 @@ function AppRouter({ config }: { config: AppConfig }) {
 
   return (
     <>
-      <QuickSwitcher folders={qsFolders} />
+      <CommandPalette
+        folders={qsFolders}
+        context="editor"
+        currentDocId={documentId}
+      />
       {editorView}
     </>
   );
