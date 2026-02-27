@@ -1,4 +1,0 @@
-# Drawbook - In-Editor File Actions & Code Cleanup
-# Branch: ralph/editor-file-actions-and-cleanup
-# Started: 2026-02-26
-

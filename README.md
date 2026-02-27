@@ -1,44 +1,54 @@
-# Drawbook
+<p align="center">
+  <img src="meta/excalidraw-ai.png" width="100%" alt="Drawbook — Excalidraw with AI Assistant" />
+</p>
 
-A self-hosted workspace that brings multiple creative and productivity tools under one roof. Create drawings, diagrams, documents, spreadsheets, and kanban boards — all saved to local storage or S3-compatible object storage. Share any document by copying its URL.
+<h1 align="center">Drawbook</h1>
 
-## Tools Included
+<p align="center">
+  <strong>A self-hosted workspace for drawings, docs, diagrams, and more.</strong><br/>
+  One app. Every creative tool you need. Your data stays yours.
+</p>
 
-| Tool | Description |
-|------|-------------|
-| **tldraw** | Infinite canvas whiteboard with real-time collaboration |
-| **Excalidraw** | Hand-drawn style diagrams |
-| **Draw.io** | Flowcharts and technical diagrams |
-| **Markdown** | Rich text editor (BlockNote) |
-| **Spreadsheet** | Spreadsheet editor (Univer) |
-| **Data Grid** | Tabular data editor (AG Grid) |
-| **Kanban** | Drag-and-drop kanban board |
-| **PDF Viewer** | Upload and view PDFs |
+<p align="center">
+  <a href="#quick-start">Quick Start</a> &bull;
+  <a href="#features">Features</a> &bull;
+  <a href="#configuration">Configuration</a>
+</p>
 
-## Features
+---
 
-- **Dashboard** with folders, search, and bulk actions
-- **Real-time collaboration** via WebSocket — open the same URL on two devices and edits sync live
-- **Shareable URLs** — every document has a unique `?doc=` URL you can send to anyone
-- **S3 / MinIO storage** — persist everything to any S3-compatible bucket
-- **Local storage** fallback — works out of the box with zero config
-- **Optional password protection**
-- **Docker-ready** with health checks and resource limits
-- **AI-powered features** — turn wireframes into working UI, chat with an AI assistant, get design suggestions, and describe canvas content (powered by Groq + Kimi K2)
-- **[[Wiki-links]]** — optional inter-document linking with a link graph, backlinks, and `[[name]]` resolution (enable in Settings)
-- **Desktop app** — runs as an Electron app with local data storage
+Drawbook brings together the best open-source editors into a single, self-hosted workspace. Create whiteboards, flowcharts, rich documents, spreadsheets, kanban boards, and code files — all organized in folders, searchable with a command palette, and backed by local storage or any S3-compatible bucket. Share any document by copying its URL.
 
-## Quick Start
+## Install
+
+### Homebrew (macOS)
+
+```bash
+brew tap sidharthmsk/drawbook
+brew install --cask drawbook
+```
+
+That's it — open Drawbook from your Applications folder.
+
+### Download
+
+Grab the latest `.dmg` from [GitHub Releases](https://github.com/sidharthmsk/drawBookRelease/releases).
+
+> **Note:** The app is not code-signed. If you download the DMG directly, right-click the app and choose **Open** the first time. This is not needed when installing via Homebrew.
+
+---
+
+## Quick Start (Self-Hosted)
 
 ### Docker (recommended)
 
 ```bash
-git clone https://github.com/<your-username>/drawbook.git
-cd drawbook
+git clone https://github.com/sidharthmsk/drawBookRelease.git
+cd drawBookRelease
 docker compose up -d --build
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000` and create your account.
 
 ### Local Development
 
@@ -52,23 +62,131 @@ npm run dev
 - Frontend: `http://localhost:5173`
 - API / WebSocket: `http://localhost:3000`
 
-### Production Build
+### Desktop (Electron) — from source
 
 ```bash
 cd app
-npm run build
-npm start
-```
-
-### Desktop (Electron)
-
-```bash
-cd app
+npm install
 npm run electron:dev        # dev build + launch
-npm run electron:pack       # package for macOS
+npm run electron:dist       # build .dmg for macOS
 ```
 
 The packaged app stores data in the OS user-data directory and runs its own local server.
+
+---
+
+## Features
+
+### Integrated Editors
+
+Create any document type from the `+ New` menu or the command palette:
+
+<p align="center">
+  <img src="meta/new-document-menu.png" width="320" alt="Create any document type" />
+</p>
+
+| Editor | What it does |
+|--------|-------------|
+| **Excalidraw** | Hand-drawn style diagrams and sketches |
+| **Draw.io** | Professional flowcharts and technical diagrams |
+| **Markdown** | Rich text editor with table of contents, export to `.md`, and word count |
+| **Spreadsheet** | Full spreadsheet editor |
+| **Data Grid** | Tabular data editor |
+| **Kanban** | Drag-and-drop task boards |
+| **Code** | Syntax-highlighted code editor |
+| **tldraw** | Infinite canvas whiteboard *(optional, requires license)* |
+
+### AI Assistant
+
+Powered by Groq, the built-in AI assistant works across editors:
+
+- **Generate diagrams from text** — describe what you want and it draws it on the Excalidraw canvas
+- **Write and edit documents** — ask AI to draft paragraphs, then apply them to your Markdown doc with one click
+- **Chat with context** — the assistant sees your current document and can answer questions about it
+- **Make Real** — turn wireframes into working UI prototypes
+
+<table>
+  <tr>
+    <td width="50%">
+      <p align="center"><strong>AI-generated diagram on Excalidraw</strong></p>
+      <img src="meta/excalidraw-ai.png" alt="AI generating a sequence diagram on Excalidraw" />
+    </td>
+    <td width="50%">
+      <p align="center"><strong>AI writing a Markdown document</strong></p>
+      <img src="meta/markdown-ai.png" alt="AI Assistant drafting content in the Markdown editor" />
+    </td>
+  </tr>
+</table>
+
+### Dashboard & Organization
+
+- **Folders** — organize documents into nested folders
+- **Multiple views** — switch between list, grid, graph, and calendar views
+- **Quick search** — fuzzy-find any document instantly with `Cmd+K`
+- **Command palette** — create new documents, open settings, jump to trash — all from the keyboard
+- **Calendar view** — see documents plotted on a monthly calendar with daily notes
+- **Tasks** — lightweight task manager linked to your documents
+- **Trash & restore** — deleted documents go to trash before permanent removal
+
+<table>
+  <tr>
+    <td width="50%">
+      <p align="center"><strong>Dashboard</strong></p>
+      <img src="meta/dashboard.png" alt="Dashboard with folders and document list" />
+    </td>
+    <td width="50%">
+      <p align="center"><strong>Command Palette</strong></p>
+      <img src="meta/command-palette.png" alt="Command palette with quick actions" />
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <p align="center"><strong>Calendar View</strong></p>
+      <img src="meta/calendar-view.png" alt="Monthly calendar with daily notes" />
+    </td>
+    <td width="50%">
+      <p align="center"><strong>Tasks</strong></p>
+      <img src="meta/tasks.png" alt="Lightweight task manager" />
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" colspan="2">
+      <p align="center"><strong>Quick Search</strong></p>
+      <p align="center"><img src="meta/quick-search.png" width="60%" alt="Fuzzy search across all documents" /></p>
+    </td>
+  </tr>
+</table>
+
+### Collaboration & Sharing
+
+- **Real-time sync** — open the same URL on two devices and edits sync live via WebSocket
+- **Shareable URLs** — every document has a unique `?doc=` URL you can send to anyone
+- **Multi-user accounts** — each user gets their own account with registration control
+
+<p align="center">
+  <img src="meta/sign-up.png" width="60%" alt="Account creation screen" />
+</p>
+
+### Knowledge Graph
+
+- **[[Wiki-links]]** — link documents together with `[[name]]` syntax
+- **Link graph** — visualize how your documents connect in an interactive node graph
+- **Backlinks** — see which documents reference the current one
+
+<p align="center">
+  <img src="meta/link-graph.png" width="80%" alt="Interactive link graph showing document connections" />
+</p>
+
+### Storage & Deployment
+
+- **Local storage** — works out of the box with zero config, documents saved as JSON files
+- **S3 / MinIO** — persist everything to any S3-compatible bucket
+- **Docker-ready** — includes Dockerfile, docker-compose, health checks, and resource limits
+- **Desktop app** — runs as a native Electron app on macOS
+- **Password protection** — optional shared password or per-user accounts
+- **Homebrew** — install the desktop app via `brew install --cask drawbook`
+
+---
 
 ## Configuration
 
@@ -78,102 +196,50 @@ Copy `app/env.example` to `app/.env` and adjust:
 |----------|---------|-------------|
 | `PORT` | `3000` | Server port |
 | `DATA_DIR` | `./data` | Local storage directory |
-| `APP_PASSWORD` | *(unset)* | Set to enable password protection |
-| `ENABLE_TLDRAW` | `false` | Set to `true` to enable the tldraw whiteboard (requires a [tldraw license](https://tldraw.dev) for production) |
-| `ENABLE_LINKING` | `false` | Set to `true` to enable [[wiki-links]], link graph, and backlinks |
+| `APP_PASSWORD` | *(unset)* | Set to enable shared password protection |
+| `ENABLE_TLDRAW` | `false` | Enable the tldraw whiteboard (requires a [tldraw license](https://tldraw.dev) for production) |
+| `ENABLE_LINKING` | `false` | Enable [[wiki-links]], link graph, and backlinks |
+| `ENABLE_REGISTRATION` | `true` | Set to `false` to prevent new sign-ups |
 | `STORAGE_BACKEND` | *(auto)* | `local` or `minio` — auto-detects when MinIO vars are present |
 | `MINIO_ENDPOINT_URL` | — | Full URL to S3/MinIO endpoint (e.g. `http://minio:9000`) |
 | `MINIO_ACCESS_KEY` | — | S3 access key |
 | `MINIO_SECRET_KEY` | — | S3 secret key |
-| `MINIO_BUCKET` | `tldraw` | Bucket name |
+| `MINIO_BUCKET` | `drawbook` | Bucket name |
 | `MINIO_REGION` | `us-east-1` | Bucket region |
 | `MINIO_PREFIX` | *(empty)* | Key prefix inside the bucket |
-| `CORS_ORIGINS` | *(open)* | Comma-separated allowed origins (e.g. `https://draw.example.com`) |
-| `GROQ_API_KEY` | — | For AI features: Make Real, chat assistant, suggestions (get key at [console.groq.com](https://console.groq.com)) |
+| `CORS_ORIGINS` | *(open)* | Comma-separated allowed origins |
+| `GROQ_API_KEY` | — | For AI features (get key at [console.groq.com](https://console.groq.com)) |
+| `TRUST_PROXY` | `false` | Set to `true` behind a reverse proxy for accurate rate limiting |
 
-## Storage Backends
+### Storage Backends
 
 **Local (default):** Documents are stored as JSON files in `DATA_DIR`. Zero setup required.
 
 **MinIO / S3:** Set `STORAGE_BACKEND=minio` (or just provide the MinIO env vars) and the server will persist documents, metadata, and uploaded files to your S3-compatible bucket. The bucket is created automatically if it doesn't exist.
 
-## Project Structure
-
-```
-drawbook/
-├── app/
-│   ├── src/                  # React frontend
-│   │   ├── App.tsx           # Auth + routing
-│   │   └── components/       # Dashboard, editors, AI tools
-│   ├── server/
-│   │   ├── index.ts          # Express + WebSocket server
-│   │   ├── storage.ts        # Local & S3 storage adapters
-│   │   └── ai.ts             # AI features (Groq + Kimi K2)
-│   ├── electron/
-│   │   ├── main.ts           # Electron main process
-│   │   └── preload.cjs       # Preload script
-│   ├── build/                # App icons (png, icns, ico)
-│   ├── electron-builder.yml  # Electron packaging config
-│   ├── Dockerfile
-│   ├── env.example
-│   └── package.json
-└── docker-compose.yml
-```
-
-## API
-
-All endpoints are prefixed with `/api` and protected by `APP_PASSWORD` when set.
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/health` | Health check |
-| `POST` | `/api/auth/login` | Authenticate |
-| `GET` | `/api/auth/check` | Check auth status |
-| `GET` | `/api/documents` | List documents |
-| `GET` | `/api/load/:id` | Load a document |
-| `POST` | `/api/save/:id` | Save a document |
-| `DELETE` | `/api/delete/:id` | Delete a document |
-| `POST` | `/api/rename/:id` | Rename a document |
-| `POST` | `/api/upload` | Upload a file (PDF) |
-| `GET` | `/api/file/:id` | Serve an uploaded file |
-| `GET/POST` | `/api/folders` | List / create folders |
-| `POST` | `/api/bulk/move` | Bulk move documents |
-| `POST` | `/api/bulk/delete` | Bulk delete documents |
-| `GET` | `/api/resolve` | Resolve a document name to its ID (for [[links]]) |
-| `GET` | `/api/backlinks/:id` | List documents that link to this one |
-| `GET` | `/api/link-graph` | Full node/edge graph of inter-document links |
-| `GET` | `/api/config` | Public app config (feature flags) |
-| `GET/PUT` | `/api/settings` | Read / update server settings |
-| `POST` | `/api/ai/generate-ui` | Generate UI prototype from wireframe descriptions |
-| `POST` | `/api/ai/chat` | Chat with AI assistant |
-| `POST` | `/api/ai/describe` | Describe canvas contents |
-| `POST` | `/api/ai/suggest` | Get smart suggestions for canvas |
-
-WebSocket endpoint: `ws://<host>/ws?doc=<documentId>`
+---
 
 ## Security Notes
 
-- **No built-in user management.** `APP_PASSWORD` is a single shared password. If you need per-user auth, put Drawbook behind an auth proxy (OAuth2 Proxy, Cloudflare Access, Authelia, etc.).
+- **Multi-user accounts** with registration control. Disable sign-ups with `ENABLE_REGISTRATION=false` after creating your accounts.
 - **CORS is open by default** for ease of self-hosting. Set `CORS_ORIGINS` to restrict it in production.
 - Login endpoint is rate-limited (10 attempts per 15 minutes).
-- When exposing to the internet, use HTTPS (reverse proxy with TLS termination).
+- When exposing to the internet, use HTTPS via a reverse proxy with TLS termination.
 
 ## Third-Party Licenses
 
-Drawbook's own code is MIT-licensed, but it depends on libraries with different licenses. You are responsible for complying with each when you host or distribute this software.
+Drawbook's own code is MIT-licensed, but it depends on libraries with different licenses:
 
 | Library | License | Notes |
 |---------|---------|-------|
-| **tldraw** | [tldraw License](https://github.com/tldraw/tldraw/blob/main/LICENSE.md) (proprietary) | **Not MIT.** Production use requires a license key from [tldraw.dev](https://tldraw.dev). Dev/personal use is allowed. |
+| **tldraw** | [tldraw License](https://github.com/tldraw/tldraw/blob/main/LICENSE.md) | Production use requires a license key from [tldraw.dev](https://tldraw.dev). Dev/personal use is allowed. |
 | **Excalidraw** | MIT | |
-| **BlockNote** | MPL-2.0 | Modifications to BlockNote source must stay MPL-2.0. Using it as a dependency is fine. |
-| **Univer** | Apache-2.0 | Community packages only. Pro features may show watermarks without a commercial license. |
-| **AG Grid** | MIT (Community) | Only the Community Edition is used. Enterprise requires a separate license. |
-| **Draw.io** | Apache-2.0 | Embedded via iframe from `embed.diagrams.net` (third-party hosted service). |
+| **BlockNote** | MPL-2.0 | Modifications to BlockNote source must stay MPL-2.0. |
+| **Univer** | Apache-2.0 | Community packages only. |
+| **AG Grid** | MIT (Community) | Only the Community Edition is used. |
+| **Draw.io** | Apache-2.0 | Embedded via iframe from `embed.diagrams.net`. |
 | **PDF.js** | Apache-2.0 | |
-| **React, Express, etc.** | MIT | |
-
-> **If you plan to deploy Drawbook in production**, you need a tldraw license key. Visit [tldraw.dev](https://tldraw.dev) to get a hobby (free, non-commercial) or commercial license.
+| **CodeMirror** | MIT | |
 
 ## License
 
