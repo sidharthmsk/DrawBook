@@ -8,16 +8,19 @@ services:
     environment:
       - PORT=3000
       - DATA_DIR=/app/data
-      # - APP_PASSWORD=changeme
-      # - STORAGE_BACKEND=minio
-      # - MINIO_ENDPOINT_URL=http://minio:9000
-      # - MINIO_ACCESS_KEY=
-      # - MINIO_SECRET_KEY=
-      # - MINIO_BUCKET=drawbook
+      - APP_PASSWORD=changeme
+      - STORAGE_BACKEND=minio
+      - MINIO_ENDPOINT_URL=${MINIO_ENDPOINT_URL}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_BUCKET=${MINIO_BUCKET}
     volumes:
       - drawbook-data:/app/data
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3006:3000"
+    networks:
+      - homelab
+      - drawbook-internal
     security_opt:
       - no-new-privileges:true
     pids_limit: 128
@@ -38,7 +41,8 @@ services:
 volumes:
   drawbook-data:
 
-
-
-
-
+networks:
+  homelab:
+    external: true
+  drawbook-internal:
+    driver: bridge
