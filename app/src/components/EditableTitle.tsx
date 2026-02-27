@@ -49,7 +49,13 @@ export function EditableTitle({ documentId }: EditableTitleProps) {
         body: JSON.stringify({ newName: trimmed }),
       });
       if (res.ok) {
+        const data = await res.json();
         setDisplayName(trimmed);
+        if (data.newDocumentId && data.newDocumentId !== documentId) {
+          const params = new URLSearchParams(window.location.search);
+          params.set("doc", data.newDocumentId);
+          window.location.search = params.toString();
+        }
       }
     } catch {
       // keep old name on failure

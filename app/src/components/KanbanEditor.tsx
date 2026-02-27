@@ -6,6 +6,7 @@ import {
   type EditorAdapter,
 } from "./ai/EditorAdapter";
 import { renderWithLinks } from "./DocumentLink";
+import { useConfirm } from "./ConfirmDialog";
 import {
   DndContext,
   DragOverlay,
@@ -789,6 +790,7 @@ function SortableColumn({
 
 export function KanbanEditor({ documentId }: KanbanEditorProps) {
   const isMobile = useIsMobile();
+  const confirm = useConfirm();
   const [data, setData] = useState<KanbanSnapshot | undefined>(undefined);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error">(
     "saved",
@@ -965,7 +967,9 @@ export function KanbanEditor({ documentId }: KanbanEditorProps) {
   );
 
   const deleteCard = useCallback(
-    (id: string) => {
+    async (id: string) => {
+      if (!(await confirm({ message: "Delete this card?", danger: true })))
+        return;
       updateData((prev) => ({
         ...prev,
         cards: prev.cards.filter((c) => c.id !== id),
@@ -975,7 +979,7 @@ export function KanbanEditor({ documentId }: KanbanEditorProps) {
         })),
       }));
     },
-    [updateData],
+    [updateData, confirm],
   );
 
   const addColumn = useCallback(() => {
@@ -1014,7 +1018,14 @@ export function KanbanEditor({ documentId }: KanbanEditorProps) {
   );
 
   const deleteColumn = useCallback(
-    (id: string) => {
+    async (id: string) => {
+      if (
+        !(await confirm({
+          message: "Delete this column and all its cards?",
+          danger: true,
+        }))
+      )
+        return;
       updateData((prev) => {
         const col = prev.columns.find((c) => c.id === id);
         return {
@@ -1024,7 +1035,7 @@ export function KanbanEditor({ documentId }: KanbanEditorProps) {
         };
       });
     },
-    [updateData],
+    [updateData, confirm],
   );
 
   const moveCardToColumn = useCallback(

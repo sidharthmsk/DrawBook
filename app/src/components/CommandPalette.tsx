@@ -820,7 +820,24 @@ export function CommandPalette({
     <div className="command-palette-overlay" onClick={() => setOpen(false)}>
       <div className="command-palette" onClick={(e) => e.stopPropagation()}>
         <div className="command-palette__input-row">
-          <span className="command-palette__mode-pill">{modeIcon}</span>
+          <button
+            className="command-palette__mode-pill"
+            onClick={() => {
+              const next: PaletteMode =
+                mode === "docs"
+                  ? "actions"
+                  : mode === "actions"
+                    ? "folders"
+                    : "docs";
+              setQuery(
+                next === "actions" ? ">" : next === "folders" ? "/" : "",
+              );
+              setTimeout(() => inputRef.current?.focus(), 0);
+            }}
+            title={`Mode: ${mode} (click to switch)`}
+          >
+            {modeIcon}
+          </button>
           <input
             ref={inputRef}
             className="command-palette__input"
@@ -897,7 +914,24 @@ export function CommandPalette({
         <div className="command-palette__footer">
           <kbd>↑↓</kbd> navigate <kbd>↵</kbd> open <kbd>esc</kbd> close{" "}
           <span className="command-palette__footer-sep" />
-          <kbd>&gt;</kbd> actions <kbd>/</kbd> folders
+          <button
+            className={`command-palette__mode-btn${mode === "actions" ? " command-palette__mode-btn--active" : ""}`}
+            onClick={() => {
+              setQuery(mode === "actions" ? "" : ">");
+              setTimeout(() => inputRef.current?.focus(), 0);
+            }}
+          >
+            <kbd>&gt;</kbd> Actions
+          </button>
+          <button
+            className={`command-palette__mode-btn${mode === "folders" ? " command-palette__mode-btn--active" : ""}`}
+            onClick={() => {
+              setQuery(mode === "folders" ? "" : "/");
+              setTimeout(() => inputRef.current?.focus(), 0);
+            }}
+          >
+            <kbd>/</kbd> Folders
+          </button>
         </div>
       </div>
     </div>

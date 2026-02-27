@@ -135,6 +135,11 @@ export function deleteSession(token: string): void {
   db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
 }
 
+export function deleteAllUserSessions(userId: string): void {
+  const db = getDb();
+  db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+}
+
 export function getUserCount(): number {
   const db = getDb();
   return (
@@ -160,13 +165,30 @@ declare global {
   }
 }
 
+function getTokenFromReq(req: Request): string {
+  const header = req.headers.authorization;
+  if (header?.startsWith("Bearer ")) return header.slice(7);
+  // Fall back to httpOnly cookie
+  const cookieHeader = req.headers.cookie;
+  if (cookieHeader) {
+    for (const pair of cookieHeader.split(";")) {
+      const eqIdx = pair.indexOf("=");
+      if (eqIdx === -1) continue;
+      const key = pair.slice(0, eqIdx).trim();
+      if (key === "drawbook_auth") {
+        return decodeURIComponent(pair.slice(eqIdx + 1).trim());
+      }
+    }
+  }
+  return "";
+}
+
 export function multiUserAuthMiddleware(
   req: Request,
   res: Response,
   next: NextFunction,
 ) {
-  const header = req.headers.authorization;
-  const token = header?.startsWith("Bearer ") ? header.slice(7) : "";
+  const token = getTokenFromReq(req);
 
   const user = validateSession(token);
   if (!user) {

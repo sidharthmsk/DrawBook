@@ -28,10 +28,50 @@ import {
   loginUser,
   validateSession,
   deleteSession,
+  deleteAllUserSessions,
   getUserCount,
   multiUserAuthMiddleware,
   AuthError,
 } from "./auth.js";
+
+const AUTH_COOKIE_NAME = "drawbook_auth";
+const AUTH_COOKIE_MAX_AGE = 30 * 24 * 60 * 60; // 30 days in seconds
+
+function parseCookies(
+  cookieHeader: string | undefined,
+): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  if (!cookieHeader) return cookies;
+  for (const pair of cookieHeader.split(";")) {
+    const eqIdx = pair.indexOf("=");
+    if (eqIdx === -1) continue;
+    const key = pair.slice(0, eqIdx).trim();
+    const val = pair.slice(eqIdx + 1).trim();
+    cookies[key] = decodeURIComponent(val);
+  }
+  return cookies;
+}
+
+function setAuthCookie(res: express.Response, token: string): void {
+  res.setHeader(
+    "Set-Cookie",
+    `${AUTH_COOKIE_NAME}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${AUTH_COOKIE_MAX_AGE}`,
+  );
+}
+
+function clearAuthCookie(res: express.Response): void {
+  res.setHeader(
+    "Set-Cookie",
+    `${AUTH_COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`,
+  );
+}
+
+function getTokenFromRequest(req: express.Request): string {
+  const header = req.headers.authorization;
+  if (header?.startsWith("Bearer ")) return header.slice(7);
+  const cookies = parseCookies(req.headers.cookie);
+  return cookies[AUTH_COOKIE_NAME] || "";
+}
 
 function typeFromId(id: string): DocumentType {
   if (id.startsWith("excalidraw-")) return "excalidraw";
@@ -66,6 +106,8 @@ const ENABLE_TLDRAW =
   (process.env.ENABLE_TLDRAW || "false").toLowerCase() === "true";
 const ENABLE_LINKING =
   (process.env.ENABLE_LINKING || "false").toLowerCase() === "true";
+const ENABLE_REGISTRATION =
+  (process.env.ENABLE_REGISTRATION || "true").toLowerCase() === "true";
 
 function requireAuth(
   req: express.Request,
@@ -76,8 +118,8 @@ function requireAuth(
     return multiUserAuthMiddleware(req, res, next);
   }
   if (!AUTH_TOKEN) return next();
-  const header = req.headers.authorization;
-  if (header === `Bearer ${AUTH_TOKEN}`) return next();
+  const token = getTokenFromRequest(req);
+  if (token === AUTH_TOKEN) return next();
   res.status(401).json({ error: "Unauthorized" });
 }
 
@@ -158,28 +200,42 @@ async function ensureUserStorageInit(req: express.Request): Promise<void> {
 }
 
 const app = express();
-app.set("trust proxy", 1);
+if (process.env.TRUST_PROXY) {
+  app.set(
+    "trust proxy",
+    process.env.TRUST_PROXY === "true" ? 1 : process.env.TRUST_PROXY,
+  );
+}
 const server = createServer(app);
 
 // WebSocket server for live sync
 const wss = new WebSocketServer({ server, path: "/ws" });
 
+const WS_MAX_MESSAGE_SIZE = 5 * 1024 * 1024; // 5 MB
+const WS_RATE_WINDOW_MS = 1000;
+const WS_RATE_MAX = 60; // max messages per second
+
 // Store connections per document
 const rooms = new Map<string, Set<WebSocket>>();
 
-wss.on("connection", (ws, req) => {
+wss.on("connection", async (ws, req) => {
   const url = new URL(req.url || "", `http://${req.headers.host}`);
   const documentId = url.searchParams.get("doc");
+  // Read token from query string or cookie (cookie preferred for security)
+  const cookies = parseCookies(req.headers.cookie);
+  const token =
+    cookies[AUTH_COOKIE_NAME] || url.searchParams.get("token") || "";
+
+  let userId: string | undefined;
 
   if (MULTI_USER) {
-    const token = url.searchParams.get("token");
-    const user = validateSession(token || "");
+    const user = validateSession(token);
     if (!user) {
       ws.close(1008, "Unauthorized");
       return;
     }
+    userId = user.id;
   } else if (AUTH_TOKEN) {
-    const token = url.searchParams.get("token");
     if (token !== AUTH_TOKEN) {
       ws.close(1008, "Unauthorized");
       return;
@@ -189,6 +245,25 @@ wss.on("connection", (ws, req) => {
   if (!documentId) {
     ws.close(1008, "Document ID required");
     return;
+  }
+
+  // Verify the user has access to this document in multi-user mode
+  if (MULTI_USER && userId) {
+    try {
+      const dataDir = process.env.DATA_DIR || path.join(process.cwd(), "data");
+      const userStorage = createStorageAdapter(
+        path.join(dataDir, "users", userId),
+      );
+      await userStorage.init();
+      const doc = await userStorage.loadDocument(documentId);
+      if (!doc) {
+        ws.close(1008, "Document not found");
+        return;
+      }
+    } catch {
+      ws.close(1008, "Document access denied");
+      return;
+    }
   }
 
   // Join room
@@ -201,13 +276,36 @@ wss.on("connection", (ws, req) => {
     `[WS] Client joined room: ${documentId} (${rooms.get(documentId)!.size} clients)`,
   );
 
-  ws.on("message", (data) => {
+  // Per-connection rate limiting state
+  let messageTimestamps: number[] = [];
+
+  ws.on("message", (data: Buffer | ArrayBuffer | Buffer[]) => {
+    const raw = Buffer.isBuffer(data)
+      ? data
+      : Array.isArray(data)
+        ? Buffer.concat(data)
+        : Buffer.from(data);
+    const msgSize = raw.length;
+    if (msgSize > WS_MAX_MESSAGE_SIZE) {
+      ws.close(1009, "Message too large");
+      return;
+    }
+
+    const now = Date.now();
+    messageTimestamps = messageTimestamps.filter(
+      (t) => now - t < WS_RATE_WINDOW_MS,
+    );
+    if (messageTimestamps.length >= WS_RATE_MAX) {
+      return; // silently drop
+    }
+    messageTimestamps.push(now);
+
     // Broadcast to all other clients in the same room
     const room = rooms.get(documentId);
     if (room) {
       room.forEach((client) => {
         if (client !== ws && client.readyState === WebSocket.OPEN) {
-          client.send(data.toString());
+          client.send(raw.toString());
         }
       });
     }
@@ -233,7 +331,21 @@ wss.on("connection", (ws, req) => {
 
 app.use(
   helmet({
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com"],
+        imgSrc: ["'self'", "data:", "blob:", "https:"],
+        connectSrc: ["'self'", "wss:", "ws:"],
+        frameSrc: ["https://embed.diagrams.net"],
+        workerSrc: ["'self'", "blob:"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+      },
+    },
     crossOriginEmbedderPolicy: false,
   }),
 );
@@ -246,10 +358,36 @@ app.use(
           origin: corsOrigins,
           credentials: true,
         }
-      : undefined,
+      : {
+          origin: false,
+          credentials: true,
+        },
   ),
 );
-app.use(express.json({ limit: "50mb" }));
+app.use(express.json({ limit: "10mb" }));
+
+// General API rate limiter
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  message: { error: "Too many requests, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use("/api/", apiLimiter);
+
+// Stricter rate limiter for expensive operations (AI, upload, search)
+const expensiveOpLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  message: { error: "Too many requests, please slow down" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use("/api/ai/", expensiveOpLimiter);
+app.use("/api/upload", expensiveOpLimiter);
+app.use("/api/import/", expensiveOpLimiter);
+app.use("/api/search/", expensiveOpLimiter);
 
 // ============ AUTH ENDPOINTS (public) ============
 
@@ -270,6 +408,11 @@ app.post("/api/auth/register", loginLimiter, async (req, res) => {
   try {
     const { username, password, displayName } = req.body;
     const isFirstUser = getUserCount() === 0;
+
+    // Allow first user registration even when registration is disabled
+    if (!ENABLE_REGISTRATION && !isFirstUser) {
+      return res.status(403).json({ error: "Registration is disabled" });
+    }
     const { user, token } = registerUser(
       username,
       password,
@@ -285,6 +428,7 @@ app.post("/api/auth/register", loginLimiter, async (req, res) => {
       }
     }
 
+    setAuthCookie(res, token);
     res.json({
       success: true,
       token,
@@ -309,6 +453,7 @@ app.post("/api/auth/login", loginLimiter, (req, res) => {
     try {
       const { username, password } = req.body;
       const { user, token } = loginUser(username, password);
+      setAuthCookie(res, token);
       return res.json({
         success: true,
         token,
@@ -335,22 +480,23 @@ app.post("/api/auth/login", loginLimiter, (req, res) => {
   if (!password || password !== APP_PASSWORD) {
     return res.status(401).json({ error: "Invalid password" });
   }
+  setAuthCookie(res, AUTH_TOKEN);
   res.json({ success: true, token: AUTH_TOKEN });
 });
 
 app.post("/api/auth/logout", (req, res) => {
-  const header = req.headers.authorization;
-  const token = header?.startsWith("Bearer ") ? header.slice(7) : "";
+  const token = getTokenFromRequest(req);
   if (token && MULTI_USER) {
     deleteSession(token);
   }
+  clearAuthCookie(res);
   res.json({ success: true });
 });
 
 app.get("/api/auth/check", (req, res) => {
+  const token = getTokenFromRequest(req);
+
   if (MULTI_USER) {
-    const header = req.headers.authorization;
-    const token = header?.startsWith("Bearer ") ? header.slice(7) : "";
     const user = validateSession(token);
     const hasUsers = getUserCount() > 0;
     return res.json({
@@ -372,8 +518,7 @@ app.get("/api/auth/check", (req, res) => {
   if (!AUTH_TOKEN) {
     return res.json({ authenticated: true, required: false, multiUser: false });
   }
-  const header = req.headers.authorization;
-  const valid = header === `Bearer ${AUTH_TOKEN}`;
+  const valid = token === AUTH_TOKEN;
   res.json({ authenticated: valid, required: true, multiUser: false });
 });
 
@@ -395,6 +540,7 @@ app.get("/api/config", (_req, res) => {
   res.json({
     enableTldraw: ENABLE_TLDRAW,
     enableLinking: ENABLE_LINKING,
+    enableRegistration: ENABLE_REGISTRATION,
     storageBackend: STORAGE_BACKEND,
     isElectron: !!process.env.ELECTRON,
     multiUser: MULTI_USER,
@@ -510,6 +656,7 @@ const ENV_KEY_MAP: Record<string, string> = {
   appPassword: "APP_PASSWORD",
   enableTldraw: "ENABLE_TLDRAW",
   enableLinking: "ENABLE_LINKING",
+  enableRegistration: "ENABLE_REGISTRATION",
   corsOrigins: "CORS_ORIGINS",
   storageBackend: "STORAGE_BACKEND",
   minioEndpointUrl: "MINIO_ENDPOINT_URL",
@@ -644,6 +791,11 @@ app.put("/api/settings", (req, res) => {
       }
       body.appPassword = newPassword;
       delete body.currentPassword;
+
+      // Invalidate all sessions for the current user on password change
+      if (MULTI_USER && req.userId) {
+        deleteAllUserSessions(req.userId);
+      }
     }
 
     // Build env updates
@@ -651,9 +803,9 @@ app.put("/api/settings", (req, res) => {
     for (const [camelKey, envKey] of Object.entries(ENV_KEY_MAP)) {
       if (camelKey in body) {
         const val = String(body[camelKey] ?? "");
-        // Skip masked values (user didn't change the secret)
         if (SECRET_FIELDS.has(camelKey) && val.startsWith("****")) continue;
-        envUpdates[envKey] = val;
+        // Strip newlines and carriage returns to prevent env injection
+        envUpdates[envKey] = val.replace(/[\r\n]/g, "");
       }
     }
 

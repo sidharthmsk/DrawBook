@@ -1391,6 +1391,35 @@ body.dashboard-mode {
     gap: 8px;
   }
 
+  .header-actions .new-dropdown-wrapper {
+    display: none;
+  }
+
+  .mobile-new-fab {
+    position: fixed;
+    left: 16px;
+    right: auto;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    z-index: 10002;
+    border: 1px solid color-mix(in srgb, var(--accent) 70%, #ffffff 10%);
+    background: var(--accent);
+    color: var(--text-on-accent);
+    border-radius: 999px;
+    height: 44px;
+    padding: 0 14px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
+  }
+
+  .mobile-new-fab:active {
+    transform: translateY(1px);
+  }
+
   .command-palette-trigger.command-palette-trigger--search {
     width: auto;
     flex: 0 0 auto;
@@ -1438,8 +1467,26 @@ body.dashboard-mode {
     min-width: 0;
     max-height: 60vh;
     overflow-y: auto;
-    z-index: 100;
+    z-index: 10001;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow-dropdown);
   }
+
+  .new-dropdown-backdrop {
+    display: block;
+    z-index: 10000;
+  }
+}
+
+.new-dropdown-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 10000;
 }
 
 /* ─── Kicker / Breadcrumb ─── */
@@ -1506,6 +1553,22 @@ body.dashboard-mode {
 .new-dropdown-wrapper {
   position: relative;
   flex-shrink: 0;
+}
+
+.mobile-new-fab {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .mobile-new-fab {
+    display: inline-flex;
+    min-width: 88px;
+    justify-content: center;
+  }
+
+  .mobile-new-fab span {
+    display: inline;
+  }
 }
 
 .new-dropdown-menu {
@@ -3420,6 +3483,14 @@ body.dashboard-mode {
   background: var(--bg-surface-3);
   color: var(--text-secondary);
   flex-shrink: 0;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.command-palette__mode-pill:hover {
+  background: var(--bg-surface-4, rgba(255,255,255,0.12));
+  color: var(--text-primary);
 }
 .command-palette__input {
   background: transparent;
@@ -3545,6 +3616,47 @@ body.dashboard-mode {
 }
 .command-palette__footer-sep {
   flex: 1;
+}
+.command-palette__mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.command-palette__mode-btn:hover {
+  background: var(--bg-surface-3);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+.command-palette__mode-btn--active {
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  border-color: transparent;
+}
+.command-palette__mode-btn--active:hover {
+  background: var(--accent-hover, #2563eb);
+  color: #fff;
+  border-color: transparent;
+}
+.command-palette__mode-btn kbd {
+  background: var(--bg-surface-3);
+  border: 1px solid var(--border-default);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 11px;
+  font-family: inherit;
+}
+.command-palette__mode-btn--active kbd {
+  background: rgba(255,255,255,0.2);
+  border-color: rgba(255,255,255,0.3);
 }
 
 /* Trigger button for opening command palette (used in Dashboard header and EditorShell toolbar) */
@@ -5814,9 +5926,10 @@ body.dashboard-mode {
   flex-direction: column;
   gap: 2px;
 }
-.mobile-overflow__menu button,
-.mobile-overflow__menu .editor-export-btn,
-.mobile-overflow__menu .editor-topbar-btn {
+.mobile-overflow__menu > button,
+.mobile-overflow__menu > .editor-export-btn,
+.mobile-overflow__menu > .editor-topbar-btn,
+.mobile-overflow__menu > .editor-task-popover-wrapper > button {
   width: 100%;
   justify-content: flex-start;
   border-radius: var(--radius-sm);
@@ -6089,6 +6202,11 @@ body.dashboard-mode {
     gap: 6px;
   }
 
+  .editor-task-popover {
+    width: min(320px, calc(100vw - 20px));
+    max-height: min(400px, 55vh);
+  }
+
   /* Editable title */
   .editable-title,
   .editor-topbar__title {
@@ -6227,6 +6345,19 @@ body.dashboard-mode {
   /* Inline suggest dropdown */
   .inline-suggest-dropdown {
     max-width: 85vw;
+  }
+
+  /* Tasks view mobile */
+  .tasks-view__quick-add {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg-primary);
+    padding: 8px 0;
+    margin-bottom: 8px;
+  }
+  .tasks-view__quick-add-input {
+    font-size: 16px;
   }
 }
 

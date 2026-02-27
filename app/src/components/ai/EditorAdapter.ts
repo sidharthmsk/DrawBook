@@ -428,7 +428,7 @@ export function createDrawioAdapter(
         xmlRef.current = merged;
         iframe.contentWindow.postMessage(
           JSON.stringify({ action: "load", xml: merged, autosave: 1 }),
-          "*",
+          "https://embed.diagrams.net",
         );
       } catch (e) {
         console.error("[AI] Failed to apply draw.io content:", e);
