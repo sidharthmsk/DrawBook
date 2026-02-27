@@ -1,7 +1,16 @@
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import { EditableTitle } from "./EditableTitle";
 import { AiChatPanel } from "./ai/AiChatPanel";
 import type { EditorAdapter } from "./ai/EditorAdapter";
+import { useIsMobile } from "../hooks/useIsMobile";
+
+interface DocMeta {
+  type?: string;
+  createdAt?: string;
+  tags?: string[];
+  folderId?: string | null;
+  name?: string;
+}
 
 interface EditorShellProps {
   documentId: string;
@@ -9,6 +18,46 @@ interface EditorShellProps {
   saveStatus: "saved" | "saving" | "error" | "syncing";
   children: ReactNode;
   contentClassName?: string;
+  onExport?: () => void;
+  exportLabel?: string;
+  exportExtra?: ReactNode;
+}
+
+function MobileOverflowMenu({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div className="mobile-overflow" ref={menuRef}>
+      <button
+        className="mobile-overflow__trigger"
+        onClick={() => setOpen((v) => !v)}
+        title="More actions"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <circle cx="3" cy="8" r="1.5" />
+          <circle cx="8" cy="8" r="1.5" />
+          <circle cx="13" cy="8" r="1.5" />
+        </svg>
+      </button>
+      {open && (
+        <div className="mobile-overflow__menu" onClick={() => setOpen(false)}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function EditorShell({
@@ -17,8 +66,66 @@ export function EditorShell({
   saveStatus,
   children,
   contentClassName,
+  onExport,
+  exportLabel,
+  exportExtra,
 }: EditorShellProps) {
+  const isMobile = useIsMobile();
   const [aiOpen, setAiOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [versionOpen, setVersionOpen] = useState(false);
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [versions, setVersions] = useState<
+    Array<{ index: number; timestamp: string }>
+  >([]);
+  const [docMeta, setDocMeta] = useState<DocMeta | null>(null);
+  const [breadcrumbs, setBreadcrumbs] = useState<
+    Array<{ id: string | null; name: string }>
+  >([]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        e.key.toLowerCase() === "a"
+      ) {
+        e.preventDefault();
+        setAiOpen((v) => !v);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  useEffect(() => {
+    async function loadBreadcrumbs() {
+      try {
+        const metaRes = await fetch(`/api/meta/${documentId}`);
+        const meta = await metaRes.json();
+        setDocMeta(meta);
+        const crumbs: Array<{ id: string | null; name: string }> = [
+          { id: null, name: "Home" },
+        ];
+        if (meta.folderId) {
+          const foldersRes = await fetch("/api/folders");
+          const foldersData = await foldersRes.json();
+          const folders = foldersData.folders || [];
+          const chain: Array<{ id: string; name: string }> = [];
+          let cur = meta.folderId;
+          while (cur) {
+            const f = folders.find((fo: any) => fo.id === cur);
+            if (!f) break;
+            chain.unshift({ id: f.id, name: f.name });
+            cur = f.parentId;
+          }
+          crumbs.push(...chain);
+        }
+        setBreadcrumbs(crumbs);
+      } catch {}
+    }
+    loadBreadcrumbs();
+  }, [documentId]);
 
   const statusLabel =
     saveStatus === "saved"
@@ -34,6 +141,145 @@ export function EditorShell({
       : saveStatus === "saved"
         ? "saved"
         : "saving";
+
+  const infoButton = (
+    <button
+      className={`editor-export-btn${infoOpen ? " editor-export-btn--active" : ""}`}
+      onClick={() => setInfoOpen((v) => !v)}
+      title="Document Info"
+    >
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="8" cy="8" r="6" />
+        <path d="M8 7v4M8 5.5v0" />
+      </svg>
+      <span>Info</span>
+    </button>
+  );
+
+  const historyButton = (
+    <button
+      className={`editor-topbar-btn${versionOpen ? " editor-topbar-btn--active" : ""}`}
+      onClick={() => {
+        setVersionOpen((v) => !v);
+        if (!versionOpen) {
+          fetch(`/api/versions/${documentId}`)
+            .then((r) => r.json())
+            .then((data) => setVersions(data.versions || []))
+            .catch(() => {});
+        }
+      }}
+      title="Version history"
+    >
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="8" cy="8" r="6" />
+        <path d="M8 5v3l2 2" />
+      </svg>
+      <span>History</span>
+    </button>
+  );
+
+  const exportButton = onExport ? (
+    <button
+      className="editor-export-btn"
+      onClick={onExport}
+      title={exportLabel || "Export"}
+    >
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M8 2v9M4 8l4 4 4-4M2 14h12" />
+      </svg>
+      <span>{exportLabel || "Export"}</span>
+    </button>
+  ) : null;
+
+  const templateButton = (
+    <button
+      className="editor-export-btn"
+      disabled={templateSaving}
+      onClick={async () => {
+        setTemplateSaving(true);
+        try {
+          const name = window.prompt("Template name:");
+          if (!name?.trim()) return;
+          const res = await fetch(`/api/templates/from-doc/${documentId}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: name.trim() }),
+          });
+          if (!res.ok) throw new Error("Save failed");
+        } catch (err) {
+          console.error("Save as template failed:", err);
+        } finally {
+          setTemplateSaving(false);
+        }
+      }}
+      title="Save as Template"
+    >
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="2" y="2" width="12" height="12" rx="1" />
+        <path d="M5 2v5l2.5-1.5L10 7V2" />
+      </svg>
+      <span>{templateSaving ? "Saving..." : "Template"}</span>
+    </button>
+  );
+
+  const aiToggle = adapter ? (
+    <button
+      className={`ai-toggle-btn${aiOpen ? " ai-toggle-btn--active" : ""}`}
+      onClick={() => setAiOpen((v) => !v)}
+      title="Toggle AI Assistant"
+    >
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z" />
+        <path d="M18 14l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z" />
+      </svg>
+      <span className="editor-topbar__btn-label">AI</span>
+    </button>
+  ) : null;
 
   return (
     <div className="editor-wrapper">
@@ -54,44 +300,138 @@ export function EditorShell({
           >
             <path d="M10 12L6 8l4-4" />
           </svg>
-          Back
+          <span className="editor-topbar__btn-label">Back</span>
         </button>
+        {!isMobile && breadcrumbs.length > 0 && (
+          <nav className="editor-breadcrumbs">
+            {breadcrumbs.map((crumb, i) => (
+              <span key={crumb.id ?? "home"}>
+                {i > 0 && <span className="editor-breadcrumbs__sep">/</span>}
+                <a
+                  className="editor-breadcrumbs__link"
+                  href={crumb.id ? `/?folder=${crumb.id}` : "/"}
+                >
+                  {crumb.name}
+                </a>
+              </span>
+            ))}
+            <span className="editor-breadcrumbs__sep">/</span>
+          </nav>
+        )}
         <EditableTitle documentId={documentId} />
         <div className="editor-topbar__right">
           <div className="editor-topbar__status">
             <span
               className={`editor-status-dot editor-status-dot--${dotClass}`}
             />
-            <span>{statusLabel}</span>
+            <span className="editor-topbar__status-label">{statusLabel}</span>
           </div>
-          <button
-            className={`ai-toggle-btn${aiOpen ? " ai-toggle-btn--active" : ""}`}
-            onClick={() => setAiOpen((v) => !v)}
-            title="Toggle AI Assistant"
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z" />
-              <path d="M18 14l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z" />
-            </svg>
-            <span>AI</span>
-          </button>
+          {isMobile ? (
+            <>
+              <MobileOverflowMenu>
+                {infoButton}
+                {historyButton}
+                {exportButton}
+                {exportExtra}
+                {templateButton}
+              </MobileOverflowMenu>
+              {aiToggle}
+            </>
+          ) : (
+            <>
+              {infoButton}
+              {historyButton}
+              {exportButton}
+              {exportExtra}
+              {templateButton}
+              {aiToggle}
+            </>
+          )}
         </div>
       </div>
+      {infoOpen && docMeta && (
+        <div className="editor-info-bar">
+          <span>
+            <strong>Type:</strong> {docMeta.type || "unknown"}
+          </span>
+          {docMeta.createdAt && (
+            <span>
+              <strong>Created:</strong>{" "}
+              {new Date(docMeta.createdAt).toLocaleDateString()}
+            </span>
+          )}
+          {docMeta.folderId && (
+            <span>
+              <strong>Folder:</strong> {docMeta.folderId}
+            </span>
+          )}
+          {docMeta.tags && docMeta.tags.length > 0 && (
+            <span>
+              <strong>Tags:</strong> {docMeta.tags.join(", ")}
+            </span>
+          )}
+        </div>
+      )}
+      {versionOpen && (
+        <div className="editor-version-bar">
+          <strong>Version History</strong>
+          {versions.length === 0 ? (
+            <span className="editor-version-bar__empty">
+              No versions saved yet. Versions are created on each save.
+            </span>
+          ) : (
+            <div className="editor-version-bar__list">
+              {versions.map((v) => (
+                <div key={v.index} className="editor-version-bar__item">
+                  <span>{new Date(v.timestamp).toLocaleString()}</span>
+                  <button
+                    className="editor-version-bar__restore"
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(
+                          `/api/versions/${documentId}/restore`,
+                          {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ index: v.index }),
+                          },
+                        );
+                        if (res.ok) {
+                          window.location.reload();
+                        }
+                      } catch (err) {
+                        console.error("Restore failed:", err);
+                      }
+                    }}
+                  >
+                    Restore
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <div className="editor-content">
         <div className={contentClassName || "editor-canvas"}>{children}</div>
-        {aiOpen && adapter && (
-          <AiChatPanel adapter={adapter} onClose={() => setAiOpen(false)} />
+        {!isMobile && aiOpen && adapter && (
+          <AiChatPanel
+            adapter={adapter}
+            onClose={() => setAiOpen(false)}
+            documentId={documentId}
+          />
         )}
       </div>
+      {isMobile && aiOpen && adapter && (
+        <div className="ai-mobile-overlay">
+          <AiChatPanel
+            adapter={adapter}
+            onClose={() => setAiOpen(false)}
+            documentId={documentId}
+            fullScreen
+          />
+        </div>
+      )}
     </div>
   );
 }

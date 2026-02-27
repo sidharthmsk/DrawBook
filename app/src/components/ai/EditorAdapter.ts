@@ -1,7 +1,13 @@
 import type { Editor, TLShapePartial } from "tldraw";
 import type { BlockNoteEditor } from "@blocknote/core";
 
-export type EditorType = "excalidraw" | "markdown" | "tldraw" | "drawio";
+export type EditorType =
+  | "excalidraw"
+  | "markdown"
+  | "tldraw"
+  | "drawio"
+  | "kanban"
+  | "spreadsheet";
 
 export interface EditorAdapter {
   type: EditorType;
@@ -361,6 +367,163 @@ export function createDrawioAdapter(xmlRef: {
       // draw.io runs in an iframe with postMessage protocol.
       // Writing back requires postMessage with action:'load' and merged XML,
       // which is complex and fragile. For now, AI responses are text-only.
+    },
+  };
+}
+
+interface KanbanCard {
+  id: string;
+  title: string;
+  description: string;
+}
+
+interface KanbanColumn {
+  id: string;
+  title: string;
+  cardIds: string[];
+}
+
+export interface KanbanSnapshot {
+  columns: KanbanColumn[];
+  cards: KanbanCard[];
+}
+
+export function createKanbanAdapter(
+  dataRef: { current: KanbanSnapshot | undefined },
+  addCards?: (
+    cards: Array<{ title: string; description?: string; column?: string }>,
+  ) => void,
+): EditorAdapter {
+  return {
+    type: "kanban",
+    getContext() {
+      const data = dataRef.current;
+      if (!data || data.columns.length === 0) return "The board is empty.";
+
+      const cardMap = new Map(data.cards.map((c) => [c.id, c]));
+      const parts: string[] = [];
+
+      for (const col of data.columns) {
+        const cardTitles = col.cardIds
+          .map((id) => cardMap.get(id))
+          .filter(Boolean)
+          .map((c) => `  - ${c!.title}`);
+
+        if (cardTitles.length > 0) {
+          parts.push(
+            `${col.title} (${cardTitles.length} cards):\n${cardTitles.join("\n")}`,
+          );
+        } else {
+          parts.push(`${col.title} (empty)`);
+        }
+      }
+
+      return `Kanban board with ${data.columns.length} column(s):\n\n${parts.join("\n\n")}`;
+    },
+    applyContent(content: string) {
+      if (!addCards) return;
+      try {
+        const parsed = JSON.parse(content) as Array<{
+          title: string;
+          description?: string;
+          column?: string;
+        }>;
+        if (Array.isArray(parsed)) addCards(parsed);
+      } catch {
+        console.warn("Failed to parse kanban AI content");
+      }
+    },
+  };
+}
+
+export function createSpreadsheetAdapter(
+  univerRef: { current: { univerAPI: any } | null },
+  setCells?: (
+    cells: Array<{ row: number; col: number; value: string | number }>,
+  ) => void,
+): EditorAdapter {
+  return {
+    type: "spreadsheet",
+    getContext() {
+      const api = univerRef.current?.univerAPI;
+      if (!api) return "Spreadsheet not loaded.";
+
+      const wb = api.getActiveWorkbook();
+      if (!wb) return "No active workbook.";
+
+      try {
+        const data = wb.save();
+        const sheets = data?.sheets;
+        if (!sheets || typeof sheets !== "object")
+          return "The spreadsheet is empty.";
+
+        const parts: string[] = [];
+        let cellCount = 0;
+        const maxCells = 50;
+
+        for (const [sheetId, sheet] of Object.entries(sheets) as [
+          string,
+          any,
+        ][]) {
+          const name = sheet.name || sheetId;
+          const cellData = sheet.cellData;
+          if (!cellData || typeof cellData !== "object") {
+            parts.push(`Sheet "${name}": empty`);
+            continue;
+          }
+
+          const cells: string[] = [];
+          for (const [rowIdx, row] of Object.entries(cellData) as [
+            string,
+            any,
+          ][]) {
+            if (cellCount >= maxCells) break;
+            if (!row || typeof row !== "object") continue;
+            for (const [colIdx, cell] of Object.entries(row) as [
+              string,
+              any,
+            ][]) {
+              if (cellCount >= maxCells) break;
+              const val = cell?.v;
+              if (val !== undefined && val !== null && val !== "") {
+                cells.push(
+                  `  [${rowIdx},${colIdx}]: ${String(val).slice(0, 100)}`,
+                );
+                cellCount++;
+              }
+            }
+          }
+
+          if (cells.length > 0) {
+            parts.push(
+              `Sheet "${name}" (${cells.length} cells):\n${cells.join("\n")}`,
+            );
+          } else {
+            parts.push(`Sheet "${name}": empty`);
+          }
+        }
+
+        if (parts.length === 0) return "The spreadsheet is empty.";
+        const summary = parts.join("\n\n");
+        if (cellCount >= maxCells) {
+          return `${summary}\n... (showing first ${maxCells} cells)`;
+        }
+        return summary;
+      } catch (e) {
+        console.error("[AI] Failed to read spreadsheet:", e);
+        return "Unable to read spreadsheet content.";
+      }
+    },
+    applyContent(content: string) {
+      if (!setCells) return;
+      try {
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed)) {
+          setCells(parsed);
+        }
+      } catch {
+        // ignore invalid JSON
+      }
     },
   };
 }

@@ -1,0 +1,137 @@
+{
+  "project": "Drawbook",
+  "branchName": "ralph/complete-ai-and-polish",
+  "description": "Complete the AI assistant integration across all editors and polish the mind map dashboard",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Implement tldraw applyContent in EditorAdapter",
+      "description": "As a user, I want the AI assistant to create shapes on my tldraw canvas so that I can generate diagrams through chat.",
+      "acceptanceCriteria": [
+        "applyContent() in createTldrawAdapter (app/src/components/ai/EditorAdapter.ts) parses a JSON array of shape descriptions",
+        "Each shape object has at minimum: type (geo, text, arrow, note), x, y, w, h, and optional text/color props",
+        "Shapes are created using editor.createShapes() with proper tldraw shape format (TLShapePartial)",
+        "New shapes are offset to the right of existing content (similar to Excalidraw adapter pattern)",
+        "Invalid JSON input is caught and logged without crashing",
+        "The /api/ai/chat system prompt for tldraw in app/server/ai.ts is updated to instruct the model to return <tldraw-shapes>[...]</tldraw-shapes> tags with the expected JSON format",
+        "parseAiResponse() in app/server/ai.ts handles the tldraw-shapes tag extraction",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "The tldraw Editor API uses editor.createShapes(). Shape types include 'geo' (rectangle, ellipse, etc), 'text', 'arrow', 'note'. See existing getContext() in the same file for how shapes are read."
+    },
+    {
+      "id": "US-002",
+      "title": "Add draw.io AI adapter for reading diagram content",
+      "description": "As a developer, I need an EditorAdapter for draw.io so the AI can read diagram context.",
+      "acceptanceCriteria": [
+        "Add createDrawioAdapter() to app/src/components/ai/EditorAdapter.ts",
+        "Adapter accepts a ref to the current XML string (xmlRef) since draw.io runs in an iframe",
+        "getContext() parses the XML to extract cell labels, types, and connections into a human-readable summary",
+        "applyContent() is a no-op stub with a comment explaining draw.io iframe limitations",
+        "EditorType union in EditorAdapter.ts includes 'drawio'",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Draw.io uses an iframe with postMessage protocol. Writing back to it requires postMessage with action:'load' and merged XML. For now, read-only AI support is sufficient."
+    },
+    {
+      "id": "US-003",
+      "title": "Integrate DrawioEditor with EditorShell and AI panel",
+      "description": "As a user, I want to use the AI assistant while working in the draw.io editor.",
+      "acceptanceCriteria": [
+        "DrawioEditor (app/src/components/DrawioEditor.tsx) uses EditorShell instead of its own topbar markup",
+        "DrawioEditor creates a drawio adapter via createDrawioAdapter(xmlRef) and passes it to EditorShell",
+        "The AI toggle button appears in the draw.io editor topbar",
+        "Clicking 'Describe Content' with a non-empty diagram returns a description",
+        "The iframe still fills the editor-canvas area and functions normally",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "EditorShell provides the topbar with back button, editable title, save status, and AI toggle. See ExcalidrawEditor.tsx or MarkdownEditor.tsx for integration examples."
+    },
+    {
+      "id": "US-004",
+      "title": "Add Kanban AI adapter for reading board content",
+      "description": "As a developer, I need an EditorAdapter for Kanban so the AI can read board context.",
+      "acceptanceCriteria": [
+        "Add createKanbanAdapter() to app/src/components/ai/EditorAdapter.ts",
+        "Adapter accepts a ref to the current KanbanSnapshot data",
+        "getContext() produces a readable summary: columns with their card titles listed under each",
+        "applyContent() is a no-op stub for now",
+        "EditorType union includes 'kanban'",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "KanbanSnapshot has { columns: KanbanColumn[], cards: KanbanCard[] } where KanbanColumn has { id, title, cardIds } and KanbanCard has { id, title, description }."
+    },
+    {
+      "id": "US-005",
+      "title": "Integrate KanbanEditor with EditorShell and AI panel",
+      "description": "As a user, I want to use the AI assistant while working on my Kanban board.",
+      "acceptanceCriteria": [
+        "KanbanEditor (app/src/components/KanbanEditor.tsx) uses EditorShell instead of its own topbar markup",
+        "KanbanEditor creates a kanban adapter via createKanbanAdapter(dataRef) and passes it to EditorShell",
+        "The AI toggle button appears in the Kanban editor topbar",
+        "The kanban-board div still renders correctly inside EditorShell's content area",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "KanbanEditor has a dataRef that always holds the latest KanbanSnapshot. Use contentClassName='kanban-board-wrapper' or similar if the default editor-canvas class conflicts with kanban layout."
+    },
+    {
+      "id": "US-006",
+      "title": "Add Spreadsheet AI adapter for reading sheet content",
+      "description": "As a developer, I need an EditorAdapter for Spreadsheet so the AI can read sheet context.",
+      "acceptanceCriteria": [
+        "Add createSpreadsheetAdapter() to app/src/components/ai/EditorAdapter.ts",
+        "Adapter accepts a ref to the Univer API instance",
+        "getContext() reads the active workbook data and produces a summary of sheet names and cell values (first 50 non-empty cells)",
+        "applyContent() is a no-op stub for now",
+        "EditorType union includes 'spreadsheet'",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Univer API: univerAPI.getActiveWorkbook().save() returns the full workbook data. The snapshot contains sheets with cellData."
+    },
+    {
+      "id": "US-007",
+      "title": "Integrate SpreadsheetEditor with EditorShell and AI panel",
+      "description": "As a user, I want to use the AI assistant while working on my spreadsheet.",
+      "acceptanceCriteria": [
+        "SpreadsheetEditor (app/src/components/SpreadsheetEditor.tsx) uses EditorShell instead of its own topbar markup",
+        "SpreadsheetEditor creates a spreadsheet adapter via createSpreadsheetAdapter(univerRef) and passes it to EditorShell",
+        "The AI toggle button appears in the spreadsheet editor topbar",
+        "The Univer container div still renders correctly inside EditorShell's content area",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "SpreadsheetEditor stores univerRef.current which has univerAPI. The container div needs a ref for Univer to mount into."
+    },
+    {
+      "id": "US-008",
+      "title": "Fix mind map context menu folder creation",
+      "description": "As a user, I want to create a new folder from the mind map context menu and have it appear immediately.",
+      "acceptanceCriteria": [
+        "Right-clicking a folder node in mind map view and selecting 'New Folder' creates the folder via the API",
+        "The new folder appears as a child of the right-clicked folder without requiring a page refresh",
+        "The new folder node is immediately visible in the mind map layout",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Currently onCreateFolder in MindMapContextMenu.tsx only sets creatingFolder state but does not complete the API call and refresh. Check Dashboard.tsx for the folder creation API pattern (POST /api/folders)."
+    }
+  ]
+}

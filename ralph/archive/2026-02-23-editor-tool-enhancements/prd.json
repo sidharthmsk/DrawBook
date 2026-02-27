@@ -1,0 +1,202 @@
+{
+  "project": "Drawbook",
+  "branchName": "ralph/editor-tool-enhancements",
+  "description": "Enhance all editor tools: exports, AI write-back, UX improvements, dashboard grid view, and Make Real styling",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add Make Real CSS styles for tldraw",
+      "description": "As a user, I want the Make Real button and preview shape to be properly styled.",
+      "acceptanceCriteria": [
+        "CSS for .make-real-container positions it as a floating button in bottom-right of the tldraw canvas",
+        "CSS for .make-real-btn styles it as a prominent action button with hover/active states",
+        "CSS for .make-real-btn--loading shows a spinner animation",
+        "CSS for .make-real-error shows a dismissible error toast",
+        "CSS for .preview-shape and .preview-shape__iframe styles the HTML preview shape",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "The MakeRealButton and PreviewShape components use these class names but they have no CSS. Add them to index.css. Position make-real-container as position:absolute bottom:16px right:16px z-index:100."
+    },
+    {
+      "id": "US-002",
+      "title": "Add SVG and PNG export to TldrawEditor",
+      "description": "As a user, I want to export my tldraw canvas as SVG or PNG.",
+      "acceptanceCriteria": [
+        "TldrawEditor passes an onExport callback to EditorShell",
+        "Export uses editor.getSvgString() to get SVG content",
+        "The SVG is downloaded as {docName}.svg",
+        "Export button label is 'Export SVG'",
+        "A docName state is fetched from /api/meta on mount",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Use editor.getSvgString() which returns { svg: string }. Create a Blob with type 'image/svg+xml'. Fetch docName from /api/meta/:documentId."
+    },
+    {
+      "id": "US-003",
+      "title": "Add SVG export to ExcalidrawEditor",
+      "description": "As a user, I want to export my Excalidraw drawing as SVG in addition to PNG.",
+      "acceptanceCriteria": [
+        "ExcalidrawEditor has a dropdown or second export option for SVG",
+        "SVG export uses excalidrawAPI.exportToSvg() to get an SVG element",
+        "The SVG is serialized and downloaded as {docName}.svg",
+        "The existing PNG export continues to work",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Change the single export button to a dropdown with two options: Export PNG and Export SVG. Use exportToSvg() which returns an SVGElement. Serialize with XMLSerializer."
+    },
+    {
+      "id": "US-004",
+      "title": "Add word count and reading time to MarkdownEditor",
+      "description": "As a user, I want to see the word count and estimated reading time of my document.",
+      "acceptanceCriteria": [
+        "A small status bar at the bottom of the MarkdownEditor shows word count and reading time",
+        "Word count updates on every content change (debounced 500ms)",
+        "Reading time is calculated as words / 200 (rounded up to nearest minute)",
+        "Format: '123 words · 1 min read'",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Add a useEffect that listens to editor changes via editor.onEditorContentChange. Extract text from blocks using editor.blocksToMarkdownLossy. Count words with split(/\\s+/). Render as a small fixed bar at the bottom."
+    },
+    {
+      "id": "US-005",
+      "title": "Add CSV export to SpreadsheetEditor",
+      "description": "As a user, I want to export my spreadsheet as a CSV file.",
+      "acceptanceCriteria": [
+        "SpreadsheetEditor passes an onExport callback to EditorShell",
+        "Export reads cell data from the Univer workbook and converts to CSV format",
+        "The CSV is downloaded as {docName}.csv",
+        "Export button label is 'Export CSV'",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Use the univerAPI to get the active workbook and sheet. Iterate rows and columns to build CSV. Use the same pattern as the getContext function in EditorAdapter.ts for reading cells."
+    },
+    {
+      "id": "US-006",
+      "title": "Add Spreadsheet AI applyContent for cell updates",
+      "description": "As a user, I want the AI to be able to update cells in my spreadsheet.",
+      "acceptanceCriteria": [
+        "createSpreadsheetAdapter applyContent in EditorAdapter.ts parses AI response as JSON array of { row, col, value }",
+        "Cell updates are applied to the active sheet via the Univer API",
+        "The /api/ai/chat system prompt for spreadsheet in ai.ts instructs the model to return <spreadsheet-cells>[...]</spreadsheet-cells>",
+        "parseAiResponse in ai.ts handles the spreadsheet-cells tag extraction",
+        "Invalid JSON is caught without crashing",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Follow the kanban pattern. The adapter needs a setCells callback. In SpreadsheetEditor, pass a function that uses univerAPI.getActiveWorkbook().getActiveSheet() to set cell values. Add spreadsheet prompt and parser to ai.ts."
+    },
+    {
+      "id": "US-007",
+      "title": "Add Kanban card due dates",
+      "description": "As a user, I want to set due dates on Kanban cards.",
+      "acceptanceCriteria": [
+        "KanbanCard interface gains an optional dueDate?: string field",
+        "The CardDetailModal shows a date input for setting the due date",
+        "Cards with due dates show the date below the title in the board view",
+        "Overdue dates (past today) are shown in red",
+        "Existing cards without due dates continue to work",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Add dueDate to KanbanCard. Use <input type='date'> in the detail modal. Display as a small text below labels on the card. Compare with new Date() for overdue styling."
+    },
+    {
+      "id": "US-008",
+      "title": "Add Kanban column WIP limits",
+      "description": "As a user, I want to set work-in-progress limits on Kanban columns.",
+      "acceptanceCriteria": [
+        "KanbanColumn interface gains an optional wipLimit?: number field",
+        "Double-clicking the card count area of a column header opens an inline input to set the WIP limit",
+        "When a column exceeds its WIP limit, the column header shows a warning indicator (red text)",
+        "The card count displays as 'X / Y' where Y is the WIP limit",
+        "Columns without WIP limits show just the count",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Add wipLimit to KanbanColumn. Show count as 'cardIds.length / wipLimit' when set. Add red color when over limit. Use inline number input on double-click of the count."
+    },
+    {
+      "id": "US-009",
+      "title": "Add dashboard grid view for documents",
+      "description": "As a user, I want a grid/card view of my documents in addition to the list view.",
+      "acceptanceCriteria": [
+        "A third view mode 'grid' is added alongside 'list' and 'mindmap'",
+        "The view mode toggle in the dashboard header has a grid icon button",
+        "Grid view shows documents as cards in a responsive CSS grid (3-4 columns)",
+        "Each card shows: type icon with color, document name, type badge, modified date, star button",
+        "Cards are clickable to open the document",
+        "Grid view persists in localStorage with the existing viewMode key",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "Add 'grid' to the ViewMode type. Add a grid icon to the view toggle buttons. Render a CSS grid of document cards. Reuse TYPE_CONFIG for colors and icons. Style cards with a colored top border matching the type."
+    },
+    {
+      "id": "US-010",
+      "title": "Add Excalidraw library panel with shape presets",
+      "description": "As a user, I want quick access to common shape presets in Excalidraw.",
+      "acceptanceCriteria": [
+        "ExcalidrawEditor renders Excalidraw with initialData that includes a libraryItems array",
+        "The library includes presets: Flowchart shapes (start/end, process, decision, arrow), UX wireframe shapes (button, input, card, header)",
+        "Each library item has a proper name and elements",
+        "Users can drag library items onto the canvas",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "Excalidraw supports libraryItems in initialData. Define a LIBRARY_PRESETS array of LibraryItem objects. Each has id, status:'published', elements (Excalidraw element arrays), and name. Pass via initialData={{ libraryItems: LIBRARY_PRESETS }}."
+    },
+    {
+      "id": "US-011",
+      "title": "Add Markdown editor table of contents sidebar",
+      "description": "As a user, I want a table of contents sidebar that shows document headings.",
+      "acceptanceCriteria": [
+        "MarkdownEditor has a toggleable TOC sidebar on the left side",
+        "A small TOC button in the EditorShell topbar toggles the sidebar",
+        "The sidebar lists all headings (H1, H2, H3) extracted from the document blocks",
+        "Clicking a heading scrolls to that block in the editor",
+        "The TOC updates when the document content changes",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "Add a tocOpen state. Extract headings from editor.document blocks (filter by type 'heading'). Render as a sidebar with indentation based on heading level. Use editor.setTextCursorPosition to scroll to the heading on click. Add a TOC button to EditorShell (or render it inside MarkdownEditor's content area)."
+    },
+    {
+      "id": "US-012",
+      "title": "Add tldraw dark mode toggle and grid background",
+      "description": "As a user, I want to toggle dark mode and grid background in the tldraw editor.",
+      "acceptanceCriteria": [
+        "TldrawEditor detects the app's dark theme and sets tldraw's dark mode accordingly",
+        "A small toggle button in the tldraw area allows switching between dark and light canvas",
+        "The dark mode preference is stored in localStorage",
+        "Grid background is enabled by default via tldraw's grid option",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "Use editor.user.updateUserPreferences({ isDarkMode: true }) after mount. Add a small floating toggle button. Store preference in localStorage key 'drawbook-tldraw-dark'. Enable grid via Tldraw component props or editor API."
+    }
+  ]
+}

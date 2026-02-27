@@ -25,7 +25,8 @@ type DocumentType =
   | "markdown"
   | "pdf"
   | "spreadsheet"
-  | "kanban";
+  | "kanban"
+  | "code";
 
 interface DocumentItem {
   id: string;

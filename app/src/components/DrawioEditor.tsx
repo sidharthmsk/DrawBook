@@ -16,6 +16,7 @@ export function DrawioEditor({ documentId }: DrawioEditorProps) {
     "saved",
   );
   const [loading, setLoading] = useState(true);
+  const [docName, setDocName] = useState("diagram");
   const xmlRef = useRef<string>("");
   const initializedRef = useRef(false);
   const [adapter, setAdapter] = useState<EditorAdapter | null>(null);
@@ -23,6 +24,15 @@ export function DrawioEditor({ documentId }: DrawioEditorProps) {
   useEffect(() => {
     setAdapter(createDrawioAdapter(xmlRef));
   }, []);
+
+  useEffect(() => {
+    fetch(`/api/meta/${documentId}`)
+      .then((r) => r.json())
+      .then((meta) => {
+        if (meta.name) setDocName(meta.name);
+      })
+      .catch(() => {});
+  }, [documentId]);
 
   useEffect(() => {
     fetch(`/api/load/${documentId}`)
@@ -98,6 +108,18 @@ export function DrawioEditor({ documentId }: DrawioEditorProps) {
       documentId={documentId}
       adapter={adapter}
       saveStatus={saveStatus}
+      onExport={() => {
+        const xml = xmlRef.current;
+        if (!xml) return;
+        const blob = new Blob([xml], { type: "application/xml" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${docName}.drawio`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }}
+      exportLabel="Export .drawio"
     >
       {loading && (
         <div

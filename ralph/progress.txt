@@ -1,3 +1,11 @@
-# Drawbook - Complete AI & Polish
-# Branch: ralph/complete-ai-and-polish
+# Drawbook - Inline Suggest & Flowchart Generation
+# Branch: ralph/inline-suggest-and-flowchart
 # Started: 2026-02-23
+
+## US-001: Inline auto-suggest component for [[ trigger - PASS
+## US-002: Inline [[ auto-suggest in Kanban description textarea - PASS
+## US-003: Inline [[ auto-suggest in Markdown BlockNote editor - PASS
+## US-004: Server endpoint to extract document structure - PASS
+## US-005: Flowchart generator from document structure - PASS
+## US-006: Excalidraw flowchart generation UI - PASS
+## US-007: CSS for inline suggest and flowchart panel - PASS

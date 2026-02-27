@@ -1,0 +1,15 @@
+# Drawbook - Obsidian Document Linking
+# Branch: ralph/obsidian-document-linking
+# Started: 2026-02-23
+
+## US-001: Add document resolve API endpoint - PASS
+## US-002: Add backlinks API endpoint - PASS
+## US-003: Add document names list API endpoint - PASS
+## US-004: Add link graph API endpoint - PASS
+## US-005: Create DocumentLink and DocumentPicker components - PASS
+## US-006: Add document link insertion to MarkdownEditor - PASS
+## US-007: Add document link insertion and preview to KanbanEditor - PASS
+## US-008: Add backlinks panel to EditorShell - PASS
+## US-009: Render [[links]] in AI chat responses - PASS
+## US-010: Add interactive link graph to Dashboard - PASS
+## US-011: Add CSS styles for all document linking UI - PASS

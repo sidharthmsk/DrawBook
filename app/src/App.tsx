@@ -6,9 +6,11 @@ import { MarkdownEditor } from "./components/MarkdownEditor";
 import { PdfViewer } from "./components/PdfViewer";
 import { SpreadsheetEditor } from "./components/SpreadsheetEditor";
 import { KanbanEditor } from "./components/KanbanEditor";
+import { CodeEditor } from "./components/CodeEditor";
 import { Dashboard } from "./components/Dashboard";
 import { LoginPage } from "./components/LoginPage";
 import { ConfirmProvider } from "./components/ConfirmDialog";
+import { QuickSwitcher } from "./components/QuickSwitcher";
 
 type DocumentType =
   | "tldraw"
@@ -17,7 +19,8 @@ type DocumentType =
   | "markdown"
   | "pdf"
   | "spreadsheet"
-  | "kanban";
+  | "kanban"
+  | "code";
 
 function typeFromId(id: string): DocumentType {
   if (id.startsWith("excalidraw-")) return "excalidraw";
@@ -26,6 +29,7 @@ function typeFromId(id: string): DocumentType {
   if (id.startsWith("pdf-")) return "pdf";
   if (id.startsWith("spreadsheet-")) return "spreadsheet";
   if (id.startsWith("kanban-")) return "kanban";
+  if (id.startsWith("code-")) return "code";
   return "tldraw";
 }
 
@@ -128,6 +132,16 @@ function AppRouter({ config }: { config: AppConfig }) {
     urlType,
   );
   const [loading, setLoading] = useState(!urlType && !!documentId);
+  const [qsFolders, setQsFolders] = useState<
+    Array<{ id: string; name: string; parentId: string | null }>
+  >([]);
+
+  useEffect(() => {
+    fetch("/api/folders")
+      .then((r) => r.json())
+      .then((data) => setQsFolders(data.folders || []))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!documentId || urlType) return;
@@ -140,7 +154,12 @@ function AppRouter({ config }: { config: AppConfig }) {
   }, [documentId, urlType]);
 
   if (!documentId) {
-    return <Dashboard config={config} />;
+    return (
+      <>
+        <QuickSwitcher folders={qsFolders} />
+        <Dashboard config={config} />
+      </>
+    );
   }
 
   if (loading) {
@@ -154,48 +173,59 @@ function AppRouter({ config }: { config: AppConfig }) {
 
   const docType = resolvedType || typeFromId(documentId);
 
-  switch (docType) {
-    case "excalidraw":
-      return <ExcalidrawEditor documentId={documentId} />;
-    case "drawio":
-      return <DrawioEditor documentId={documentId} />;
-    case "markdown":
-      return <MarkdownEditor documentId={documentId} />;
-    case "pdf":
-      return <PdfViewer documentId={documentId} />;
-    case "spreadsheet":
-      return <SpreadsheetEditor documentId={documentId} />;
-    case "kanban":
-      return <KanbanEditor documentId={documentId} />;
-    default:
-      if (!config.enableTldraw) {
-        return (
-          <div className="editor-loading">
-            <div style={{ textAlign: "center", maxWidth: 420 }}>
-              <h2 style={{ margin: "0 0 8px" }}>tldraw is disabled</h2>
-              <p style={{ opacity: 0.7, margin: 0 }}>
-                Set <code>ENABLE_TLDRAW=true</code> in your <code>.env</code>{" "}
-                file and restart the server to use the tldraw editor. A tldraw
-                license key is required for production use.
-              </p>
-              <a
-                href="/"
-                style={{
-                  display: "inline-block",
-                  marginTop: 16,
-                  color: "var(--accent)",
-                }}
-              >
-                Back to Dashboard
-              </a>
+  const editorView = (() => {
+    switch (docType) {
+      case "excalidraw":
+        return <ExcalidrawEditor documentId={documentId} />;
+      case "drawio":
+        return <DrawioEditor documentId={documentId} />;
+      case "markdown":
+        return <MarkdownEditor documentId={documentId} />;
+      case "pdf":
+        return <PdfViewer documentId={documentId} />;
+      case "spreadsheet":
+        return <SpreadsheetEditor documentId={documentId} />;
+      case "kanban":
+        return <KanbanEditor documentId={documentId} />;
+      case "code":
+        return <CodeEditor documentId={documentId} />;
+      default:
+        if (!config.enableTldraw) {
+          return (
+            <div className="editor-loading">
+              <div style={{ textAlign: "center", maxWidth: 420 }}>
+                <h2 style={{ margin: "0 0 8px" }}>tldraw is disabled</h2>
+                <p style={{ opacity: 0.7, margin: 0 }}>
+                  Set <code>ENABLE_TLDRAW=true</code> in your <code>.env</code>{" "}
+                  file and restart the server to use the tldraw editor. A tldraw
+                  license key is required for production use.
+                </p>
+                <a
+                  href="/"
+                  style={{
+                    display: "inline-block",
+                    marginTop: 16,
+                    color: "var(--accent)",
+                  }}
+                >
+                  Back to Dashboard
+                </a>
+              </div>
             </div>
-          </div>
+          );
+        }
+        return (
+          <TldrawEditor documentId={documentId} initialFolderId={folderId} />
         );
-      }
-      return (
-        <TldrawEditor documentId={documentId} initialFolderId={folderId} />
-      );
-  }
+    }
+  })();
+
+  return (
+    <>
+      <QuickSwitcher folders={qsFolders} />
+      {editorView}
+    </>
+  );
 }
 
 export default App;

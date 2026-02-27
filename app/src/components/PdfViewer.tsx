@@ -11,6 +11,7 @@ export function PdfViewer({ documentId }: PdfViewerProps) {
   const [scale, setScale] = useState(1.2);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [docName, setDocName] = useState("document");
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pdfDocRef = useRef<any>(null);
   const pdfjsRef = useRef<any>(null);
@@ -42,6 +43,12 @@ export function PdfViewer({ documentId }: PdfViewerProps) {
     }
 
     loadPdfJs();
+    fetch(`/api/meta/${documentId}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.name) setDocName(data.name);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -171,6 +178,26 @@ export function PdfViewer({ documentId }: PdfViewerProps) {
           >
             +
           </button>
+          <span className="pdf-separator">|</span>
+          <a
+            className="pdf-nav-btn"
+            href={`/api/file/${documentId}`}
+            download={`${docName}.pdf`}
+            title="Download PDF"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M8 2v9M4 8l4 4 4-4M2 14h12" />
+            </svg>
+          </a>
         </div>
       </div>
       <div className="pdf-container">

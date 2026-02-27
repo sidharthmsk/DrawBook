@@ -33,6 +33,12 @@ export interface DocMetadata {
   folderId: string | null;
   name?: string;
   type?: DocumentType;
+  createdAt?: string;
+  createdBy?: string;
+  modifiedBy?: string;
+  tags?: string[];
+  starred?: boolean;
+  deletedAt?: string;
 }
 
 export interface StoredDocumentInfo {
@@ -61,11 +67,33 @@ function sanitizeExtension(ext: string): string {
   return ext;
 }
 
+export interface Template {
+  id: string;
+  name: string;
+  type: DocumentType;
+  snapshot: unknown;
+  createdAt: string;
+}
+
+export interface FleetingNote {
+  id: string;
+  text: string;
+  done: boolean;
+  createdAt: string;
+  documentId?: string;
+}
+
 export interface StorageAdapter {
   init(): Promise<void>;
 
   loadFolders(): Promise<Folder[]>;
   saveFolders(folders: Folder[]): Promise<void>;
+
+  loadTemplates(): Promise<Template[]>;
+  saveTemplates(templates: Template[]): Promise<void>;
+
+  loadFleetingNotes(): Promise<FleetingNote[]>;
+  saveFleetingNotes(notes: FleetingNote[]): Promise<void>;
 
   loadDocMeta(documentId: string): Promise<DocMetadata>;
   saveDocMeta(documentId: string, meta: DocMetadata): Promise<void>;
@@ -94,6 +122,12 @@ class LocalStorageAdapter implements StorageAdapter {
 
   private foldersFilePath() {
     return path.join(this.dataDir, "_folders.json");
+  }
+  private templatesFilePath() {
+    return path.join(this.dataDir, "_templates.json");
+  }
+  private fleetingFilePath() {
+    return path.join(this.dataDir, "_fleeting.json");
   }
   private docFilePath(documentId: string) {
     return path.join(this.dataDir, `${sanitizeDocumentId(documentId)}.json`);
@@ -197,6 +231,40 @@ class LocalStorageAdapter implements StorageAdapter {
     await fs.writeFile(
       this.foldersFilePath(),
       JSON.stringify(folders, null, 2),
+      "utf-8",
+    );
+  }
+
+  async loadTemplates(): Promise<Template[]> {
+    try {
+      const content = await fs.readFile(this.templatesFilePath(), "utf-8");
+      return JSON.parse(content) as Template[];
+    } catch {
+      return [];
+    }
+  }
+
+  async saveTemplates(templates: Template[]) {
+    await fs.writeFile(
+      this.templatesFilePath(),
+      JSON.stringify(templates, null, 2),
+      "utf-8",
+    );
+  }
+
+  async loadFleetingNotes(): Promise<FleetingNote[]> {
+    try {
+      const content = await fs.readFile(this.fleetingFilePath(), "utf-8");
+      return JSON.parse(content) as FleetingNote[];
+    } catch {
+      return [];
+    }
+  }
+
+  async saveFleetingNotes(notes: FleetingNote[]) {
+    await fs.writeFile(
+      this.fleetingFilePath(),
+      JSON.stringify(notes, null, 2),
       "utf-8",
     );
   }
@@ -393,6 +461,12 @@ class MinioStorageAdapter implements StorageAdapter {
   private foldersKey() {
     return this.keyFor("meta/folders.json");
   }
+  private templatesKey() {
+    return this.keyFor("meta/templates.json");
+  }
+  private fleetingKey() {
+    return this.keyFor("meta/fleeting.json");
+  }
   private legacyMetadataKey() {
     return this.keyFor("meta/metadata.json");
   }
@@ -551,6 +625,22 @@ class MinioStorageAdapter implements StorageAdapter {
     await this.putJson(this.foldersKey(), folders);
   }
 
+  async loadTemplates(): Promise<Template[]> {
+    return this.getJson<Template[]>(this.templatesKey(), []);
+  }
+
+  async saveTemplates(templates: Template[]) {
+    await this.putJson(this.templatesKey(), templates);
+  }
+
+  async loadFleetingNotes(): Promise<FleetingNote[]> {
+    return this.getJson<FleetingNote[]>(this.fleetingKey(), []);
+  }
+
+  async saveFleetingNotes(notes: FleetingNote[]) {
+    await this.putJson(this.fleetingKey(), notes);
+  }
+
   async loadDocMeta(documentId: string): Promise<DocMetadata> {
     return this.getJson<DocMetadata>(this.docMetaKey(documentId), {
       folderId: null,
@@ -705,6 +795,162 @@ class MinioStorageAdapter implements StorageAdapter {
   }
 }
 
+// ─── Caching Wrapper ───
+
+class CachedStorageAdapter implements StorageAdapter {
+  private inner: StorageAdapter;
+
+  private docListCache: DocumentWithMeta[] | null = null;
+  private docListCacheTime = 0;
+  private metaCache = new Map<string, { data: DocMetadata; time: number }>();
+  private docCache = new Map<string, { data: unknown; time: number }>();
+
+  private static DOC_LIST_TTL = 30_000; // 30s
+  private static META_TTL = 60_000;
+  private static DOC_TTL = 60_000;
+  private static MAX_DOC_CACHE = 50;
+
+  constructor(inner: StorageAdapter) {
+    this.inner = inner;
+  }
+
+  async init() {
+    await this.inner.init();
+  }
+
+  private invalidateDocList() {
+    this.docListCache = null;
+  }
+
+  async loadFolders() {
+    return this.inner.loadFolders();
+  }
+  async saveFolders(folders: Folder[]) {
+    return this.inner.saveFolders(folders);
+  }
+
+  async loadTemplates() {
+    return this.inner.loadTemplates();
+  }
+  async saveTemplates(templates: Template[]) {
+    return this.inner.saveTemplates(templates);
+  }
+
+  async loadFleetingNotes() {
+    return this.inner.loadFleetingNotes();
+  }
+  async saveFleetingNotes(notes: FleetingNote[]) {
+    return this.inner.saveFleetingNotes(notes);
+  }
+
+  async loadDocMeta(documentId: string): Promise<DocMetadata> {
+    const cached = this.metaCache.get(documentId);
+    if (cached && Date.now() - cached.time < CachedStorageAdapter.META_TTL) {
+      return cached.data;
+    }
+    const meta = await this.inner.loadDocMeta(documentId);
+    this.metaCache.set(documentId, { data: meta, time: Date.now() });
+    return meta;
+  }
+
+  async saveDocMeta(documentId: string, meta: DocMetadata) {
+    await this.inner.saveDocMeta(documentId, meta);
+    this.metaCache.set(documentId, { data: meta, time: Date.now() });
+    this.invalidateDocList();
+  }
+
+  async deleteDocMeta(documentId: string) {
+    await this.inner.deleteDocMeta(documentId);
+    this.metaCache.delete(documentId);
+    this.invalidateDocList();
+  }
+
+  async saveDocument(documentId: string, snapshot: unknown) {
+    await this.inner.saveDocument(documentId, snapshot);
+    this.docCache.set(documentId, { data: snapshot, time: Date.now() });
+    this.invalidateDocList();
+    // Evict oldest if cache is too large
+    if (this.docCache.size > CachedStorageAdapter.MAX_DOC_CACHE) {
+      let oldestKey = "";
+      let oldestTime = Infinity;
+      for (const [k, v] of this.docCache) {
+        if (v.time < oldestTime) {
+          oldestTime = v.time;
+          oldestKey = k;
+        }
+      }
+      if (oldestKey) this.docCache.delete(oldestKey);
+    }
+  }
+
+  async loadDocument(documentId: string): Promise<unknown | null> {
+    const cached = this.docCache.get(documentId);
+    if (cached && Date.now() - cached.time < CachedStorageAdapter.DOC_TTL) {
+      return cached.data;
+    }
+    const doc = await this.inner.loadDocument(documentId);
+    if (doc !== null) {
+      this.docCache.set(documentId, { data: doc, time: Date.now() });
+    }
+    return doc;
+  }
+
+  async listDocumentsWithMeta(): Promise<DocumentWithMeta[]> {
+    if (
+      this.docListCache &&
+      Date.now() - this.docListCacheTime < CachedStorageAdapter.DOC_LIST_TTL
+    ) {
+      return this.docListCache;
+    }
+    const list = await this.inner.listDocumentsWithMeta();
+    this.docListCache = list;
+    this.docListCacheTime = Date.now();
+    // Warm meta cache from the list results
+    for (const item of list) {
+      this.metaCache.set(item.id, { data: item.meta, time: Date.now() });
+    }
+    return list;
+  }
+
+  async deleteDocument(documentId: string) {
+    const result = await this.inner.deleteDocument(documentId);
+    this.docCache.delete(documentId);
+    this.metaCache.delete(documentId);
+    this.invalidateDocList();
+    return result;
+  }
+
+  async existsDocument(documentId: string) {
+    return this.inner.existsDocument(documentId);
+  }
+
+  async renameDocument(oldDocumentId: string, newDocumentId: string) {
+    await this.inner.renameDocument(oldDocumentId, newDocumentId);
+    // Move caches
+    const oldDoc = this.docCache.get(oldDocumentId);
+    if (oldDoc) {
+      this.docCache.set(newDocumentId, oldDoc);
+      this.docCache.delete(oldDocumentId);
+    }
+    const oldMeta = this.metaCache.get(oldDocumentId);
+    if (oldMeta) {
+      this.metaCache.set(newDocumentId, oldMeta);
+      this.metaCache.delete(oldDocumentId);
+    }
+    this.invalidateDocList();
+  }
+
+  async saveFile(documentId: string, buffer: Buffer, extension: string) {
+    return this.inner.saveFile(documentId, buffer, extension);
+  }
+  async loadFile(documentId: string, extension: string) {
+    return this.inner.loadFile(documentId, extension);
+  }
+  async deleteFile(documentId: string, extension: string) {
+    return this.inner.deleteFile(documentId, extension);
+  }
+}
+
 // ─── Factory ───
 
 function getRequiredEnv(name: string) {
@@ -724,15 +970,17 @@ function resolveMinioEndpoint() {
   return `${useSsl ? "https" : "http"}://${host}:${port}`;
 }
 
-export function createStorageAdapter() {
+export function createStorageAdapter(): StorageAdapter {
   const backendOverride = process.env.STORAGE_BACKEND?.toLowerCase();
   const hasMinioKeys =
     Boolean(process.env.MINIO_ACCESS_KEY) &&
     Boolean(process.env.MINIO_SECRET_KEY) &&
     Boolean(process.env.MINIO_ENDPOINT_URL || process.env.MINIO_ENDPOINT);
 
+  let inner: StorageAdapter;
+
   if (backendOverride === "minio" || (!backendOverride && hasMinioKeys)) {
-    return new MinioStorageAdapter({
+    inner = new MinioStorageAdapter({
       endpoint: resolveMinioEndpoint(),
       accessKeyId: getRequiredEnv("MINIO_ACCESS_KEY"),
       secretAccessKey: getRequiredEnv("MINIO_SECRET_KEY"),
@@ -740,12 +988,12 @@ export function createStorageAdapter() {
       region: process.env.MINIO_REGION || "us-east-1",
       prefix: process.env.MINIO_PREFIX,
     });
-  }
-
-  if (backendOverride && backendOverride !== "local") {
+  } else if (backendOverride && backendOverride !== "local") {
     throw new Error(`Unsupported STORAGE_BACKEND: ${backendOverride}`);
+  } else {
+    const dataDir = process.env.DATA_DIR || path.join(process.cwd(), "data");
+    inner = new LocalStorageAdapter(dataDir);
   }
 
-  const dataDir = process.env.DATA_DIR || path.join(process.cwd(), "data");
-  return new LocalStorageAdapter(dataDir);
+  return new CachedStorageAdapter(inner);
 }
