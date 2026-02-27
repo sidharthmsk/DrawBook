@@ -901,8 +901,15 @@ export function Dashboard({ config }: { config: AppConfig }) {
       setNewDropdownOpen(false);
       setBulkMoveOpen(false);
     };
-    document.addEventListener("click", closeMenus);
-    return () => document.removeEventListener("click", closeMenus);
+    const raf = requestAnimationFrame(() => {
+      document.addEventListener("click", closeMenus);
+      document.addEventListener("touchend", closeMenus);
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      document.removeEventListener("click", closeMenus);
+      document.removeEventListener("touchend", closeMenus);
+    };
   }, [openMenuId, newDropdownOpen, bulkMoveOpen]);
 
   const createNewDocument = (type: DocumentType) => {
@@ -2178,6 +2185,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
                   e.stopPropagation();
                   setNewDropdownOpen((v) => !v);
                 }}
+                onTouchEnd={(e) => e.stopPropagation()}
               >
                 <IconPlus />
                 New
@@ -2187,6 +2195,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
                 <div
                   className="new-dropdown-menu"
                   onClick={(e) => e.stopPropagation()}
+                  onTouchEnd={(e) => e.stopPropagation()}
                 >
                   {(
                     [

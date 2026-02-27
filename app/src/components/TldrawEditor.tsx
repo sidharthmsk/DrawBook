@@ -331,17 +331,19 @@ export function TldrawEditor({
       onExport={handleExport}
       exportLabel="Export SVG"
     >
-      <Tldraw store={store} onMount={handleMount} autoFocus>
-        <div className="tldraw-theme-toggle">
-          <button
-            className="tldraw-theme-toggle__btn"
-            onClick={() => setIsDark((v) => !v)}
-            title={isDark ? "Switch to light mode" : "Switch to dark mode"}
-          >
-            {isDark ? "☀️" : "🌙"}
-          </button>
-        </div>
-      </Tldraw>
+      <div style={{ position: "absolute", inset: 0 }}>
+        <Tldraw store={store} onMount={handleMount} autoFocus>
+          <div className="tldraw-theme-toggle">
+            <button
+              className="tldraw-theme-toggle__btn"
+              onClick={() => setIsDark((v) => !v)}
+              title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {isDark ? "☀️" : "🌙"}
+            </button>
+          </div>
+        </Tldraw>
+      </div>
     </EditorShell>
   );
 }
