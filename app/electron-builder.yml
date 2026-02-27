@@ -22,10 +22,12 @@ files:
 mac:
   category: public.app-category.productivity
   icon: build/icon.icns
+  identity: null
   target:
-    - target: dir
+    - target: dmg
       arch:
         - arm64
+        - x64
 
 win:
   icon: build/icon.ico
@@ -39,5 +41,23 @@ linux:
 
 asar: true
 
+publish:
+  provider: github
+  owner: YOUR_GITHUB_USERNAME
+  repo: drawbook
+
 extraMetadata:
   main: dist/electron/main.js
+
+# 1. Build the DMG locally first to test
+# cd app
+# npm run electron:dist
+
+# # 2. When ready, publish to GitHub Releases (needs a GITHUB_TOKEN env var)
+# export GITHUB_TOKEN=your_token_here
+# npm run electron:publish
+
+# # 3. After the release is up, get the SHA256 of each DMG:
+# shasum -a 256 release/*.dmg
+
+# 4. Update the sha256 values in homebrew/Casks/drawbook.rb
