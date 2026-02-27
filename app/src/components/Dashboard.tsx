@@ -151,23 +151,6 @@ const IconFolder = () => (
   </svg>
 );
 
-const IconSearch = () => (
-  <svg
-    className="search-icon"
-    width="15"
-    height="15"
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <circle cx="7" cy="7" r="4.5" />
-    <path d="M10.5 10.5L14 14" />
-  </svg>
-);
-
 const IconPlus = () => (
   <svg
     width="14"
@@ -624,7 +607,6 @@ export function Dashboard({ config }: { config: AppConfig }) {
   const [renameTarget, setRenameTarget] = useState<RenameTarget>(null);
   const [renameValue, setRenameValue] = useState("");
   const renameCancelled = useRef(false);
-  const [searchTerm, setSearchTerm] = useState("");
   type SortKey =
     | "modified-desc"
     | "modified-asc"
@@ -671,6 +653,9 @@ export function Dashboard({ config }: { config: AppConfig }) {
     }>
   >([]);
   const [taskFilter, setTaskFilter] = useState<"all" | "open" | "done">("all");
+  const [tasksViewTypeMenu, setTasksViewTypeMenu] = useState<string | null>(
+    null,
+  );
   const [templates, setTemplates] = useState<
     Array<{
       id: string;
@@ -682,14 +667,6 @@ export function Dashboard({ config }: { config: AppConfig }) {
   const [trashDocs, setTrashDocs] = useState<
     Array<{ id: string; name: string; type: string; deletedAt: string }>
   >([]);
-  const [contentSearchResults, setContentSearchResults] = useState<Array<{
-    id: string;
-    name: string;
-    type: string;
-    snippet: string;
-  }> | null>(null);
-  const [contentSearching, setContentSearching] = useState(false);
-  const contentSearchTimeout = useRef<NodeJS.Timeout | null>(null);
   const [focusedDocIndex, setFocusedDocIndex] = useState(-1);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -1018,17 +995,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
   }, [allDocs, folders]);
 
   const visibleDocs = useMemo(() => {
-    let docs: DocumentItem[];
-    if (!searchTerm.trim()) {
-      docs = allDocs.filter((doc) => doc.folderId === currentFolder);
-    } else {
-      const normalized = searchTerm.trim().toLowerCase();
-      docs = allDocs.filter(
-        (doc) =>
-          doc.name.toLowerCase().includes(normalized) ||
-          doc.id.toLowerCase().includes(normalized),
-      );
-    }
+    const docs = allDocs.filter((doc) => doc.folderId === currentFolder);
     const sorted = [...docs];
     switch (sortKey) {
       case "modified-asc":
@@ -1060,7 +1027,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
       return sorted.filter((d) => d.tags?.includes(activeTag));
     }
     return sorted;
-  }, [allDocs, currentFolder, searchTerm, sortKey, activeTag]);
+  }, [allDocs, currentFolder, sortKey, activeTag]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -1096,7 +1063,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
   }, [allDocs]);
 
   const recentDocs = useMemo(() => {
-    if (currentFolder || searchTerm.trim()) return [];
+    if (currentFolder) return [];
     try {
       const raw = localStorage.getItem("drawbook_recent");
       const ids: string[] = raw ? JSON.parse(raw) : [];
@@ -1107,7 +1074,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
     } catch {
       return [];
     }
-  }, [allDocs, currentFolder, searchTerm]);
+  }, [allDocs, currentFolder]);
 
   const createFolder = async (e: FormEvent) => {
     e.preventDefault();
@@ -1401,29 +1368,6 @@ export function Dashboard({ config }: { config: AppConfig }) {
       console.error("Failed to empty trash:", err);
     }
   };
-
-  const doContentSearch = useCallback((term: string) => {
-    if (contentSearchTimeout.current)
-      clearTimeout(contentSearchTimeout.current);
-    if (term.length < 2) {
-      setContentSearchResults(null);
-      return;
-    }
-    setContentSearching(true);
-    contentSearchTimeout.current = setTimeout(async () => {
-      try {
-        const res = await fetch(
-          `/api/search/content?q=${encodeURIComponent(term)}`,
-        );
-        const data = await res.json();
-        setContentSearchResults(data.results || []);
-      } catch {
-        setContentSearchResults([]);
-      } finally {
-        setContentSearching(false);
-      }
-    }, 300);
-  }, []);
 
   const toggleStar = async (docId: string) => {
     try {
@@ -1982,6 +1926,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
             setShowSettings(false);
             setCurrentFolder(null);
             loadTasks();
+            loadFleetingNotes();
           }}
         >
           <svg
@@ -2091,31 +2036,14 @@ export function Dashboard({ config }: { config: AppConfig }) {
             <h2>{currentFolderName}</h2>
           </div>
           <div className="header-actions">
-            <div className="search-wrapper">
-              <IconSearch />
-              <input
-                className="search-input"
-                value={searchTerm}
-                onChange={(e) => {
-                  setSearchTerm(e.target.value);
-                  setShowTrash(false);
-                  setShowTasks(false);
-                  setShowLinkGraph(false);
-                  setShowSettings(false);
-                  doContentSearch(e.target.value);
-                }}
-                placeholder="Search documents & content..."
-              />
-            </div>
-
             <button
-              className="command-palette-trigger"
-              onClick={() => openCommandPalette("actions")}
-              title="Command Palette (⌘K then >)"
+              className="command-palette-trigger command-palette-trigger--search"
+              onClick={() => openCommandPalette()}
+              title="Search (⌘K)"
             >
               <svg
-                width="16"
-                height="16"
+                width="14"
+                height="14"
                 viewBox="0 0 16 16"
                 fill="none"
                 stroke="currentColor"
@@ -2123,9 +2051,11 @@ export function Dashboard({ config }: { config: AppConfig }) {
                 strokeLinecap="round"
                 strokeLinejoin="round"
               >
-                <path d="M6 4l4 4-4 4" />
-                <rect x="1" y="1" width="14" height="14" rx="3" />
+                <circle cx="7" cy="7" r="4.5" />
+                <path d="M10.5 10.5L14 14" />
               </svg>
+              <span className="command-palette-trigger__label">Search...</span>
+              <kbd className="command-palette-trigger__kbd">⌘K</kbd>
             </button>
 
             <select
@@ -2361,20 +2291,65 @@ export function Dashboard({ config }: { config: AppConfig }) {
                 ))}
               </div>
             </div>
+
+            <form
+              className="tasks-view__quick-add"
+              onSubmit={(e) => {
+                e.preventDefault();
+                addFleetingNote();
+              }}
+            >
+              <input
+                className="tasks-view__quick-add-input"
+                value={fleetingInput}
+                onChange={(e) => setFleetingInput(e.target.value)}
+                placeholder="Quick add a note..."
+              />
+              <button
+                className="tasks-view__quick-add-btn"
+                type="submit"
+                disabled={!fleetingInput.trim()}
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                >
+                  <path d="M8 3v10M3 8h10" />
+                </svg>
+              </button>
+            </form>
+
             {(() => {
-              const filtered = tasks.filter((t) =>
+              const filteredTasks = tasks.filter((t) =>
                 taskFilter === "all"
                   ? true
                   : taskFilter === "open"
                     ? !t.done
                     : t.done,
               );
-              if (filtered.length === 0) {
+
+              const filteredNotes = fleetingNotes.filter((n) =>
+                taskFilter === "all"
+                  ? true
+                  : taskFilter === "open"
+                    ? !n.done
+                    : n.done,
+              );
+
+              const unlinkedNotes = filteredNotes.filter((n) => !n.documentId);
+              const linkedNotes = filteredNotes.filter((n) => n.documentId);
+
+              if (filteredTasks.length === 0 && filteredNotes.length === 0) {
                 return (
                   <div className="empty-state">
                     <p>
                       {taskFilter === "all"
-                        ? "No tasks yet. Add tasks from inside any document using the toolbar button."
+                        ? "No tasks yet. Use the input above to jot down a quick note, or add tasks from inside any document."
                         : taskFilter === "open"
                           ? "No open tasks."
                           : "No completed tasks."}
@@ -2382,19 +2357,115 @@ export function Dashboard({ config }: { config: AppConfig }) {
                   </div>
                 );
               }
-              const grouped = new Map<string, Array<(typeof filtered)[0]>>();
-              for (const t of filtered) {
+
+              const grouped = new Map<
+                string,
+                Array<(typeof filteredTasks)[0]>
+              >();
+              for (const t of filteredTasks) {
                 const key = t.documentId;
                 if (!grouped.has(key)) grouped.set(key, []);
                 grouped.get(key)!.push(t);
               }
+
+              for (const n of linkedNotes) {
+                const key = n.documentId!;
+                if (!grouped.has(key)) grouped.set(key, []);
+              }
+
               return (
                 <div className="tasks-view__groups">
+                  {unlinkedNotes.length > 0 && (
+                    <div className="tasks-view__group">
+                      <div className="tasks-view__group-header">
+                        <span className="tasks-view__group-label">
+                          Quick Notes
+                        </span>
+                      </div>
+                      {unlinkedNotes.map((note) => (
+                        <div
+                          key={note.id}
+                          className={`tasks-view__item${note.done ? " tasks-view__item--done" : ""}`}
+                        >
+                          <button
+                            className={`tasks-view__check${note.done ? " tasks-view__check--checked" : ""}`}
+                            onClick={() =>
+                              toggleFleetingDone(note.id, !note.done)
+                            }
+                          >
+                            {note.done && (
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 12 12"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M2 6l3 3 5-5" />
+                              </svg>
+                            )}
+                          </button>
+                          <span className="tasks-view__text">{note.text}</span>
+                          <div className="tasks-view__item-actions">
+                            <button
+                              className="tasks-view__open-as"
+                              title="Open as note"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setTasksViewTypeMenu(
+                                  tasksViewTypeMenu === note.id
+                                    ? null
+                                    : note.id,
+                                );
+                              }}
+                            >
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M5 11L11 5M11 5H6M11 5v5" />
+                              </svg>
+                            </button>
+                            <button
+                              className="tasks-view__delete"
+                              onClick={() => deleteFleetingNote(note.id)}
+                              title="Delete"
+                            >
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 12 12"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                              >
+                                <path d="M3 3l6 6M9 3l-6 6" />
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {Array.from(grouped.entries()).map(([docId, docTasks]) => {
                     const doc = allDocs.find((d) => d.id === docId);
                     const docName = doc?.name || doc?.id || docId;
                     const docType = doc?.type as DocumentType | undefined;
                     const isDeleted = !doc;
+                    const docLinkedNotes = linkedNotes.filter(
+                      (n) => n.documentId === docId,
+                    );
                     return (
                       <div key={docId} className="tasks-view__group">
                         <div className="tasks-view__group-header">
@@ -2428,6 +2499,54 @@ export function Dashboard({ config }: { config: AppConfig }) {
                             )}
                           </button>
                         </div>
+                        {docLinkedNotes.map((note) => (
+                          <div
+                            key={note.id}
+                            className={`tasks-view__item${note.done ? " tasks-view__item--done" : ""}`}
+                          >
+                            <button
+                              className={`tasks-view__check${note.done ? " tasks-view__check--checked" : ""}`}
+                              onClick={() =>
+                                toggleFleetingDone(note.id, !note.done)
+                              }
+                            >
+                              {note.done && (
+                                <svg
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 12 12"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path d="M2 6l3 3 5-5" />
+                                </svg>
+                              )}
+                            </button>
+                            <span className="tasks-view__text tasks-view__text--note">
+                              {note.text}
+                            </span>
+                            <button
+                              className="tasks-view__delete"
+                              onClick={() => deleteFleetingNote(note.id)}
+                              title="Delete"
+                            >
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 12 12"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                              >
+                                <path d="M3 3l6 6M9 3l-6 6" />
+                              </svg>
+                            </button>
+                          </div>
+                        ))}
                         {docTasks.map((task) => (
                           <div
                             key={task.id}
@@ -2482,6 +2601,45 @@ export function Dashboard({ config }: { config: AppConfig }) {
                 </div>
               );
             })()}
+
+            {tasksViewTypeMenu && (
+              <div
+                className="fleeting-panel__type-menu-overlay"
+                onClick={() => setTasksViewTypeMenu(null)}
+              >
+                <div
+                  className="fleeting-panel__type-menu"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {(
+                    [
+                      "markdown",
+                      "excalidraw",
+                      "kanban",
+                      "spreadsheet",
+                      "code",
+                    ] as DocumentType[]
+                  ).map((t) => {
+                    const conf = TYPE_CONFIG[t];
+                    const Icon = TYPE_ICONS[t];
+                    return (
+                      <button
+                        key={t}
+                        onClick={() => {
+                          openFleetingAs(tasksViewTypeMenu, t);
+                          setTasksViewTypeMenu(null);
+                        }}
+                      >
+                        <span style={{ color: conf.color, display: "flex" }}>
+                          <Icon />
+                        </span>
+                        <span>{conf.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </section>
         ) : showTrash ? (
           <section className="trash-view">
@@ -2531,29 +2689,6 @@ export function Dashboard({ config }: { config: AppConfig }) {
                 })}
               </div>
             )}
-          </section>
-        ) : contentSearchResults && contentSearchResults.length > 0 ? (
-          <section className="content-search-results">
-            <h3 className="content-search-results__title">
-              Content matches ({contentSearchResults.length})
-              {contentSearching && " ..."}
-            </h3>
-            {contentSearchResults.map((r) => (
-              <div
-                key={r.id}
-                className="content-search-result"
-                onClick={() => {
-                  const doc = allDocs.find((d) => d.id === r.id);
-                  if (doc) openDoc(doc);
-                }}
-              >
-                <span className="content-search-result__name">{r.name}</span>
-                <span className="content-search-result__type">{r.type}</span>
-                <span className="content-search-result__snippet">
-                  {r.snippet}
-                </span>
-              </div>
-            ))}
           </section>
         ) : loading ? (
           <div className="empty-state">
