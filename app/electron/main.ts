@@ -57,11 +57,25 @@ app.whenReady().then(async () => {
 
   process.env.ELECTRON = "1";
   process.env.DATA_DIR = dataDir;
+  process.env.PORT = String(port);
   process.env.STORAGE_BACKEND = process.env.STORAGE_BACKEND || "local";
 
-  const serverPath = "../server/index.js";
-  const { startServer } = await import(/* webpackIgnore: true */ serverPath);
-  await startServer({ port, dataDir });
+  try {
+    const serverPath = path.join(__dirname, "..", "server", "index.js");
+    const { startServer } = await import(
+      /* webpackIgnore: true */ `file://${serverPath}`
+    );
+    await startServer({ port, dataDir });
+  } catch (err) {
+    console.error("Failed to start server:", err);
+    const { dialog } = await import("electron");
+    dialog.showErrorBox(
+      "Drawbook — Server Error",
+      `Could not start the local server.\n\n${err instanceof Error ? err.message : String(err)}`,
+    );
+    app.quit();
+    return;
+  }
 
   await createWindow(port);
 });

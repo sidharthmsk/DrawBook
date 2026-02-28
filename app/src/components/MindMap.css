@@ -254,6 +254,14 @@
   flex-shrink: 0;
 }
 
+.mindmap-context-menu__submenu {
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 2px;
+  padding-top: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
 /* ─── Mind Map Drag & Drop ─── */
 .mindmap-file-node--dragging {
   transform: scale(1.05);

@@ -19,11 +19,8 @@
   background: var(--bg-base);
 }
 
-/* Match standalone mobile feel: keep bottom tools, hide top corner controls */
-.excalidraw-mobile-host .App-menu_top,
-.excalidraw-mobile-host .layer-ui__wrapper__top-right,
-.excalidraw-mobile-host .sidebar-trigger,
-.excalidraw-mobile-host .library-menu-trigger {
+/* Keep Excalidraw's own top bar visible on mobile for tool access */
+.excalidraw-mobile-host .sidebar-trigger {
   display: none !important;
 }
 

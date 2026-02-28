@@ -1604,6 +1604,7 @@ export function Dashboard({ config }: { config: AppConfig }) {
             setShowTrash(false);
             setShowTasks(false);
             setShowLinkGraph(false);
+            setSidebarOpen(false);
           }}
         >
           <svg

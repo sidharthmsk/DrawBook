@@ -16,6 +16,7 @@ import { FileNode } from "./mindmap/FileNode";
 import { FolderNode } from "./mindmap/FolderNode";
 import { MindMapContextMenu } from "./mindmap/MindMapContextMenu";
 import { useAutoLayout, getDescendantFolderIds } from "./mindmap/useAutoLayout";
+import { useMemo } from "react";
 
 type DocumentType =
   | "tldraw"
@@ -113,6 +114,28 @@ function MindMapViewInner({
   onMoveFolder,
 }: MindMapViewProps) {
   const { fitView } = useReactFlow();
+
+  const folderTree = useMemo(() => {
+    const byParent = new Map<string | null, Folder[]>();
+    for (const f of folders) {
+      const key = f.parentId ?? "__root__";
+      const list = byParent.get(key) || [];
+      list.push(f);
+      byParent.set(key, list);
+    }
+    const build = (
+      parentId: string | null,
+      depth: number,
+    ): Array<{ folder: Folder; children: any[]; depth: number }> => {
+      const key = parentId ?? "__root__";
+      return (byParent.get(key) || []).map((f) => ({
+        folder: f,
+        children: build(f.id, depth + 1),
+        depth,
+      }));
+    };
+    return build(null, 0);
+  }, [folders]);
 
   const layoutResult = useAutoLayout(docs, folders, expandedFolders);
 
@@ -425,6 +448,7 @@ function MindMapViewInner({
         position={contextMenu?.position ?? null}
         nodeType={contextMenu?.nodeType ?? null}
         nodeId={contextMenu?.nodeId ?? null}
+        folderTree={folderTree}
         onCreateFile={(folderId, type) => onCreateDocument(folderId, type)}
         onCreateFolder={(parentId) => onCreateFolder(parentId)}
         onRename={(id, kind) => {
@@ -434,6 +458,10 @@ function MindMapViewInner({
         onDelete={(id, kind) => {
           if (kind === "doc") onDeleteDocument(id);
           else onDeleteFolder(id);
+        }}
+        onMove={(id, kind, targetFolderId) => {
+          if (kind === "doc") onMoveDocument(id, targetFolderId);
+          else onMoveFolder(id, targetFolderId);
         }}
         onOpen={(id) => onOpenDocument(id)}
         onClose={handleContextClose}
